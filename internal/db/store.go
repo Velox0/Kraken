@@ -145,6 +145,17 @@ func (s *Store) SetProjectAutofix(ctx context.Context, projectID int64, enabled 
 	return nil
 }
 
+func (s *Store) DeleteProject(ctx context.Context, projectID int64) error {
+	cmd, err := s.pool.Exec(ctx, `DELETE FROM projects WHERE id=$1`, projectID)
+	if err != nil {
+		return err
+	}
+	if cmd.RowsAffected() == 0 {
+		return fmt.Errorf("project %d not found", projectID)
+	}
+	return nil
+}
+
 type Check struct {
 	ID             int64     `json:"id"`
 	ProjectID      int64     `json:"project_id"`

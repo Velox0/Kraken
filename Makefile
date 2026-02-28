@@ -1,4 +1,4 @@
-.PHONY: up down migrate api scheduler worker notifier test
+.PHONY: up down migrate api scheduler worker notifier app test
 
 up:
 	docker compose up -d
@@ -20,6 +20,9 @@ worker:
 
 notifier:
 	go run ./cmd/notifier
+
+app:
+	go run ./cmd/app
 
 test:
 	go test ./...

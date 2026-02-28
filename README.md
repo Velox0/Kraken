@@ -1,33 +1,30 @@
-# Kraken (MVP Foundation)
+# Kraken
 
-Kraken is a project-based uptime monitor with queue-driven execution and incident/alert handling.
+Kraken is a project-based uptime monitor with queue-driven checks, incidents, SMTP alerts, and autofix hooks.
 
-## Implemented MVP Foundation
+## What You Can Run Now
 
-- HTTP/TCP/Ping checks executed by dedicated workers
-- Scheduler that enqueues work (checks are never run in API process)
-- Incident dedup (`one open incident per project`)
-- Consecutive-failure threshold before opening incident
-- SMTP alerts for `opened`, `resolved`, and cooldown-based repeated failures
-- Autofix plugin model with DB-backed scripts and safe execution constraints
-- PostgreSQL schema for projects/checks/incidents/logs/smtp/fixes
+- Monitor HTTP/TCP/Ping checks
+- Deduplicate incidents (`1 open incident per project`)
+- Trigger SMTP alerts on open/resolve/repeated failures
+- Configure and run autofix scripts
+- Use a built-in frontend to create projects, view logs/incidents/check runs, and run fixes
 
-## Process Architecture
+## Runtime Modes
 
-- `cmd/api`: CRUD + manual trigger API
-- `cmd/scheduler`: picks due projects and enqueues check jobs
-- `cmd/worker`: executes checks, updates health/incidents, runs autofix, queues alerts
-- `cmd/notifier`: sends SMTP alerts from email queue
+- Single app (recommended): `cmd/app`
+  - Runs API + scheduler + worker + notifier in one process
+- Split mode (optional): `cmd/api`, `cmd/scheduler`, `cmd/worker`, `cmd/notifier`
 
 ## Quick Start
 
-1. Start dependencies:
+1. Start Postgres + Redis:
 
 ```bash
 docker compose up -d
 ```
 
-2. Configure environment:
+2. Configure env:
 
 ```bash
 cp .env.example .env
@@ -37,80 +34,57 @@ export $(grep -v '^#' .env | xargs)
 3. Run migration:
 
 ```bash
-make migrate
+cat db/migrations/0001_init.sql | docker compose exec -T postgres psql -U postgres -d kraken
 ```
 
-4. Run services in separate terminals:
+4. Start Kraken single app:
 
 ```bash
-make api
-make scheduler
-make worker
-make notifier
+make app
 ```
 
-## API Endpoints
+5. Open UI:
+
+- `http://localhost:8080/`
+
+## Core API
 
 - `GET /healthz`
 - `GET /v1/projects`
 - `POST /v1/projects`
+- `DELETE /v1/projects/{projectID}`
 - `PATCH /v1/projects/{projectID}/autofix`
 - `GET /v1/projects/{projectID}/checks`
 - `POST /v1/projects/{projectID}/checks`
 - `POST /v1/projects/{projectID}/run-now`
+- `GET /v1/projects/{projectID}/logs`
+- `GET /v1/projects/{projectID}/incidents`
+- `GET /v1/projects/{projectID}/check-runs`
+- `GET /v1/projects/{projectID}/fixes`
+- `POST /v1/projects/{projectID}/fixes`
+- `POST /v1/projects/{projectID}/fixes/upload` (multipart `.sh` upload)
+- `POST /v1/projects/{projectID}/fixes/{fixID}/run`
 - `POST /v1/smtp_profiles`
 
-### Example: Create SMTP Profile
+## Frontend Features
 
-```bash
-curl -X POST http://localhost:8080/v1/smtp_profiles \
-  -H 'content-type: application/json' \
-  -d '{
-    "host":"smtp.example.com",
-    "port":587,
-    "username":"alerts@example.com",
-    "password":"supersecret",
-    "from_email":"alerts@example.com"
-  }'
-```
-
-### Example: Create Project
-
-```bash
-curl -X POST http://localhost:8080/v1/projects \
-  -H 'content-type: application/json' \
-  -d '{
-    "name":"Example",
-    "domain":"example.com",
-    "check_interval_sec":30,
-    "failure_threshold":3,
-    "autofix_enabled":true,
-    "smtp_profile_id":1,
-    "alert_emails":["oncall@example.com"]
-  }'
-```
-
-### Example: Add Check
-
-```bash
-curl -X POST http://localhost:8080/v1/projects/1/checks \
-  -H 'content-type: application/json' \
-  -d '{
-    "type":"http",
-    "target":"https://example.com",
-    "timeout_ms":5000,
-    "expected_status":200
-  }'
-```
+- Create project + path-based checks
+- Trigger run-now checks
+- Toggle autofix
+- Create and attach fixes
+- Upload `.sh` fix scripts from the UI and attach to projects
+- Queue manual fix execution
+- Delete projects from the project detail view
+- View logs, incidents, and recent check runs
 
 ## Autofix Safety Baseline
 
 - Script path constrained to `FIX_SCRIPTS_DIR`
-- Command allowlist (`ALLOWED_FIX_COMMANDS`)
-- Per-fix timeout enforced
-- Full stdout/stderr output logged
+- Command allowlist via `ALLOWED_FIX_COMMANDS`
+- Per-fix execution timeout
+- Full output logged to project logs table
 
 ## Notes
 
-- `smtp_profiles.password_encrypted` currently stores provided value as-is. Integrate KMS/app-key encryption before production.
-- Ping checks rely on system `ping` binary availability.
+- SMTP password field currently stores value as-is in `password_encrypted`; replace with real encryption before production.
+- Ping checks depend on system `ping` availability.

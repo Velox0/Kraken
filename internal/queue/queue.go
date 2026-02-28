@@ -12,6 +12,7 @@ import (
 const (
 	checkQueueKey = "kraken:queue:checks"
 	emailQueueKey = "kraken:queue:emails"
+	fixQueueKey   = "kraken:queue:fixes"
 )
 
 var ErrNoJob = errors.New("no job available")
@@ -28,6 +29,13 @@ type EmailJob struct {
 	Subject       string    `json:"subject"`
 	Body          string    `json:"body"`
 	EnqueuedAt    time.Time `json:"enqueued_at"`
+}
+
+type FixJob struct {
+	ProjectID   int64     `json:"project_id"`
+	FixID       int64     `json:"fix_id"`
+	RequestedBy string    `json:"requested_by"`
+	EnqueuedAt  time.Time `json:"enqueued_at"`
 }
 
 type RedisQueue struct {
@@ -73,6 +81,17 @@ func (q *RedisQueue) EnqueueEmail(ctx context.Context, job EmailJob) error {
 	return q.client.LPush(ctx, emailQueueKey, payload).Err()
 }
 
+func (q *RedisQueue) EnqueueFix(ctx context.Context, job FixJob) error {
+	if job.EnqueuedAt.IsZero() {
+		job.EnqueuedAt = time.Now().UTC()
+	}
+	payload, err := json.Marshal(job)
+	if err != nil {
+		return err
+	}
+	return q.client.LPush(ctx, fixQueueKey, payload).Err()
+}
+
 func (q *RedisQueue) DequeueCheck(ctx context.Context, timeout time.Duration) (CheckJob, error) {
 	items, err := q.client.BRPop(ctx, timeout, checkQueueKey).Result()
 	if err != nil {
@@ -105,6 +124,24 @@ func (q *RedisQueue) DequeueEmail(ctx context.Context, timeout time.Duration) (E
 	var job EmailJob
 	if err := json.Unmarshal([]byte(items[1]), &job); err != nil {
 		return EmailJob{}, err
+	}
+	return job, nil
+}
+
+func (q *RedisQueue) DequeueFix(ctx context.Context, timeout time.Duration) (FixJob, error) {
+	items, err := q.client.BRPop(ctx, timeout, fixQueueKey).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return FixJob{}, ErrNoJob
+		}
+		return FixJob{}, err
+	}
+	if len(items) != 2 {
+		return FixJob{}, ErrNoJob
+	}
+	var job FixJob
+	if err := json.Unmarshal([]byte(items[1]), &job); err != nil {
+		return FixJob{}, err
 	}
 	return job, nil
 }

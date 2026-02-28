@@ -12,8 +12,8 @@ import (
 	"kraken/internal/config"
 	"kraken/internal/db"
 	"kraken/internal/incident"
-	"kraken/internal/monitor"
 	"kraken/internal/queue"
+	"kraken/internal/services"
 )
 
 func main() {
@@ -35,43 +35,26 @@ func main() {
 	autofixEngine := autofix.NewEngine(cfg.FixScriptsDir, cfg.AllowedFixCommands)
 	incSvc := incident.NewService(store, q, autofixEngine, time.Duration(cfg.AlertCooldownSec)*time.Second)
 
+	runner := &services.Worker{
+		Store:         store,
+		Queue:         q,
+		AutofixEngine: autofixEngine,
+		Incident:      incSvc,
+		Log:           log.Default(),
+	}
+	if err := runner.Validate(); err != nil {
+		log.Fatalf("worker config invalid: %v", err)
+	}
+
+	runCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-stop
+		cancel()
+	}()
 
-	log.Println("worker started")
-	for {
-		select {
-		case <-stop:
-			log.Println("worker stopping")
-			return
-		default:
-		}
-
-		job, err := q.DequeueCheck(ctx, 5*time.Second)
-		if err != nil {
-			if err == queue.ErrNoJob {
-				continue
-			}
-			log.Printf("dequeue failed: %v", err)
-			continue
-		}
-
-		checkCtx, err := store.GetCheckContext(ctx, job.CheckID)
-		if err != nil {
-			log.Printf("load check context failed: %v", err)
-			continue
-		}
-
-		result := monitor.RunCheck(ctx, checkCtx.Type, checkCtx.Target, checkCtx.TimeoutMs, checkCtx.ExpectedStatus)
-		if err := incSvc.HandleCheckResult(ctx, checkCtx, result); err != nil {
-			log.Printf("handle check result failed for check %d: %v", checkCtx.ID, err)
-			continue
-		}
-
-		if result.Healthy {
-			log.Printf("check %d healthy (%dms)", checkCtx.ID, result.ResponseTimeMs)
-		} else {
-			log.Printf("check %d failed: %s", checkCtx.ID, result.ErrorMessage)
-		}
-	}
+	runner.Run(runCtx)
 }

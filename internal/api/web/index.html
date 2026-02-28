@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Kraken Control Plane</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Plus+Jakarta+Sans:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <p class="brand-kicker">Kraken</p>
+          <h1>Control Plane</h1>
+        </div>
+
+        <nav class="side-nav" aria-label="Project views">
+          <button class="nav-btn active" data-view="dashboardView">
+            Dashboard
+          </button>
+          <button class="nav-btn" data-view="fixesView">Fixes</button>
+          <button class="nav-btn" data-view="uptimeView">Uptime</button>
+        </nav>
+
+        <div class="sidebar-footer">
+          <div class="live-row">
+            <span id="liveDot" class="live-dot"></span>
+            <span id="liveText">Live updates on</span>
+          </div>
+          <p id="lastUpdatedText" class="muted">Last updated: never</p>
+        </div>
+      </aside>
+
+      <main class="main-area">
+        <header class="topbar">
+          <div class="project-switch">
+            <select id="projectSelect" aria-label="Select project"></select>
+            <button id="openCreateBtn" class="btn">+ Add Project</button>
+          </div>
+
+          <div class="topbar-actions">
+            <button id="refreshBtn" class="btn secondary">Refresh</button>
+            <button id="runNowBtn" class="btn secondary" disabled>
+              Run Checks
+            </button>
+            <button id="toggleAutofixBtn" class="btn secondary" disabled>
+              Toggle Autofix
+            </button>
+            <button id="deleteProjectBtn" class="btn danger" disabled>
+              Delete
+            </button>
+          </div>
+        </header>
+
+        <div id="globalError" class="banner hidden"></div>
+
+        <section
+          id="createPanel"
+          class="create-panel hidden"
+          aria-label="Create project panel"
+        >
+          <div class="create-header">
+            <h2>Add Project</h2>
+            <button id="closeCreateBtn" class="btn ghost">Close</button>
+          </div>
+
+          <form id="createProjectForm" class="form-grid">
+            <label
+              >Name<input id="createName" required placeholder="my-project"
+            /></label>
+            <label
+              >Domain<input
+                id="createDomain"
+                required
+                placeholder="example.com"
+            /></label>
+            <label
+              >Check Interval (sec)<input
+                id="createInterval"
+                type="number"
+                min="5"
+                value="30"
+                required
+            /></label>
+            <label
+              >Failure Threshold<input
+                id="createThreshold"
+                type="number"
+                min="1"
+                value="3"
+                required
+            /></label>
+            <label class="checkbox-row">
+              <input id="createAutofix" type="checkbox" checked /> Enable
+              Autofix
+            </label>
+            <label
+              >Alert Emails (comma-separated)<input
+                id="createEmails"
+                placeholder="team@example.com"
+            /></label>
+            <label class="full"
+              >Paths (one per line)
+              <textarea
+                id="createPaths"
+                rows="4"
+                placeholder="/api
+/test"
+              ></textarea>
+            </label>
+            <button class="btn" type="submit">Create Project + Checks</button>
+          </form>
+        </section>
+
+        <section id="dashboardView" class="view active">
+          <div class="view-header">
+            <div>
+              <p class="muted">Selected Project</p>
+              <h2 id="projectTitle">None</h2>
+              <p id="projectSubTitle" class="muted">
+                Create or select a project.
+              </p>
+            </div>
+            <span id="statusBadge" class="status-badge unknown">Unknown</span>
+          </div>
+
+          <div class="metric-grid">
+            <article class="metric-card">
+              <p class="metric-label">Active Incidents</p>
+              <p id="metricIncidents" class="metric-value">0</p>
+            </article>
+            <article class="metric-card">
+              <p class="metric-label">Checks</p>
+              <p id="metricChecks" class="metric-value">0</p>
+            </article>
+            <article class="metric-card">
+              <p class="metric-label">Autofix</p>
+              <p id="metricAutofix" class="metric-value">Off</p>
+            </article>
+            <article class="metric-card">
+              <p class="metric-label">Last Check</p>
+              <p id="metricLastCheck" class="metric-value small">-</p>
+            </article>
+          </div>
+
+          <div class="dash-grid">
+            <article class="panel-card">
+              <h3>Checks</h3>
+              <div id="checksList" class="list"></div>
+            </article>
+
+            <article class="panel-card">
+              <h3>Incidents</h3>
+              <div id="incidentsList" class="list"></div>
+            </article>
+
+            <article
+              id="uptimeWidget"
+              class="panel-card uptime-widget"
+              role="button"
+              tabindex="0"
+              aria-label="View full uptime dashboard"
+            >
+              <div class="uptime-widget-header">
+                <h3>Uptime</h3>
+                <span id="widgetUptimePct" class="uptime-widget-pct">-</span>
+              </div>
+              <div id="widgetTimeline" class="timeline"></div>
+              <p class="uptime-widget-hint">Click for details &rarr;</p>
+            </article>
+          </div>
+        </section>
+
+        <section id="fixesView" class="view">
+          <div class="view-header">
+            <div>
+              <p class="muted">Autofix Configuration</p>
+              <h2>Fixes</h2>
+            </div>
+          </div>
+
+          <div class="metric-grid">
+            <article class="metric-card">
+              <p class="metric-label">Attached Fixes</p>
+              <p id="metricFixes" class="metric-value">0</p>
+            </article>
+            <article class="metric-card">
+              <p class="metric-label">Autofix</p>
+              <p id="metricFixAutofix" class="metric-value">Off</p>
+            </article>
+          </div>
+
+          <article class="panel-card">
+            <h3>Error Templates</h3>
+            <p class="muted">
+              Click a template to fill regex fields in fix forms.
+            </p>
+            <div id="fixTemplateList" class="template-list"></div>
+          </article>
+
+          <div class="fixes-grid">
+            <div class="fixes-forms">
+              <div class="fix-form-block">
+                <h4>Add Existing Script</h4>
+                <form id="fixForm" class="form-grid compact">
+                  <label
+                    >Name<input
+                      id="fixName"
+                      placeholder="Restart Service"
+                      required
+                  /></label>
+                  <label
+                    >Type
+                    <select id="fixType">
+                      <option value="http">http</option>
+                      <option value="tcp">tcp</option>
+                      <option value="ping">ping</option>
+                      <option value="any">any</option>
+                    </select>
+                  </label>
+                  <label
+                    >Script Path<input
+                      id="fixScriptPath"
+                      placeholder="restart-service.sh"
+                      required
+                  /></label>
+                  <label
+                    >Timeout (sec)<input
+                      id="fixTimeout"
+                      type="number"
+                      min="1"
+                      value="60"
+                      required
+                  /></label>
+                  <label class="full"
+                    >Error Pattern (regex)<input
+                      id="fixPattern"
+                      placeholder="connection refused|status code 5[0-9]{2}"
+                      required
+                  /></label>
+                  <button class="btn" type="submit">Add Fix</button>
+                </form>
+              </div>
+
+              <div class="fix-form-block">
+                <h4>Upload Script</h4>
+                <form
+                  id="fixUploadForm"
+                  class="form-grid compact"
+                  enctype="multipart/form-data"
+                >
+                  <label
+                    >Name<input
+                      id="uploadFixName"
+                      placeholder="Upload Fix Script"
+                      required
+                  /></label>
+                  <label
+                    >Type
+                    <select id="uploadFixType">
+                      <option value="http">http</option>
+                      <option value="tcp">tcp</option>
+                      <option value="ping">ping</option>
+                      <option value="any">any</option>
+                    </select>
+                  </label>
+                  <label
+                    >Timeout (sec)<input
+                      id="uploadFixTimeout"
+                      type="number"
+                      min="1"
+                      value="60"
+                      required
+                  /></label>
+                  <label
+                    >Script File (.sh)<input
+                      id="uploadFixFile"
+                      type="file"
+                      accept=".sh"
+                      required
+                  /></label>
+                  <label class="full"
+                    >Error Pattern (regex)<input
+                      id="uploadFixPattern"
+                      placeholder="timeout|connection refused"
+                      required
+                  /></label>
+                  <button class="btn" type="submit">Upload + Attach</button>
+                </form>
+              </div>
+            </div>
+
+            <div class="fixes-list-panel">
+              <h4>Attached Fixes</h4>
+              <div id="fixesList" class="list"></div>
+            </div>
+          </div>
+        </section>
+
+        <section id="uptimeView" class="view">
+          <div class="view-header">
+            <div>
+              <p class="muted">Uptime Overview</p>
+              <h2>Health Timeline</h2>
+            </div>
+          </div>
+
+          <div class="metric-grid">
+            <article class="metric-card">
+              <p class="metric-label">Uptime (recent)</p>
+              <p id="uptimeRecent" class="metric-value">0%</p>
+            </article>
+            <article class="metric-card">
+              <p class="metric-label">Uptime (total shown)</p>
+              <p id="uptimeTotal" class="metric-value">0%</p>
+            </article>
+            <article class="metric-card">
+              <p class="metric-label">Healthy Runs</p>
+              <p id="healthyRuns" class="metric-value">0</p>
+            </article>
+            <article class="metric-card">
+              <p class="metric-label">Failed Runs</p>
+              <p id="failedRuns" class="metric-value">0</p>
+            </article>
+          </div>
+
+          <article class="panel-card">
+            <h3>Run Timeline</h3>
+            <div id="timeline" class="timeline"></div>
+          </article>
+
+          <div class="panel-grid panel-grid-two">
+            <article class="panel-card">
+              <h3>Recent Check Runs</h3>
+              <div id="runsList" class="list mono"></div>
+            </article>
+
+            <article class="panel-card">
+              <h3>Live Logs</h3>
+              <div id="logsList" class="list mono"></div>
+            </article>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div id="toast" class="toast hidden"></div>
+
+    <script src="/app.js" defer></script>
+  </body>
+</html>
