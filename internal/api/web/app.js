@@ -1,23 +1,36 @@
+// ui-disk-serve-enabled
 const state = {
   projects: [],
   selectedProjectId: null,
   selectedProject: null,
+  selectedPathCheckId: null,
+  selectedPathTarget: "",
+  activeView: "dashboardView",
+  activeWindow: "1h",
+  refreshInFlight: false,
+  pendingRefresh: false,
+  pollTimer: null,
+  patternTarget: null,
+  uptimeHoverIndex: null,
+  uptimeRenderToken: 0,
+  uptimeResizeObserver: null,
   data: {
     checks: [],
     logs: [],
     incidents: [],
     runs: [],
     fixes: [],
+    uptime: null,
+    pathHealth: [],
+    pathRuns: [],
+    smtpProfiles: [],
   },
-  activeView: "dashboardView",
-  refreshInFlight: false,
-  pendingRefresh: false,
-  pollTimer: null,
-  lastUpdated: null,
-  patternTarget: null,
 };
 
-const templatePatterns = [
+const LAST_VIEW_COOKIE = "kraken_last_view";
+const VIEW_COOKIE_DAYS = 180;
+
+const errorTemplates = [
   { label: "Connection Refused", value: "connection refused|dial tcp" },
   {
     label: "HTTP 5xx",
@@ -25,74 +38,103 @@ const templatePatterns = [
   },
   { label: "Timeout", value: "timeout|context deadline exceeded|i/o timeout" },
   {
-    label: "DNS Errors",
+    label: "DNS Error",
     value:
       "no such host|server misbehaving|temporary failure in name resolution",
   },
-  { label: "TLS/Handshake", value: "tls|certificate|x509|handshake" },
+  { label: "TLS/Cert", value: "tls|certificate|x509|handshake" },
   { label: "Connection Reset", value: "connection reset|broken pipe|EOF" },
 ];
 
 const el = {
   navBtns: Array.from(document.querySelectorAll(".nav-btn")),
+  views: Array.from(document.querySelectorAll(".view")),
   projectSelect: document.getElementById("projectSelect"),
   openCreateBtn: document.getElementById("openCreateBtn"),
   closeCreateBtn: document.getElementById("closeCreateBtn"),
   createPanel: document.getElementById("createPanel"),
   createProjectForm: document.getElementById("createProjectForm"),
-
   refreshBtn: document.getElementById("refreshBtn"),
   runNowBtn: document.getElementById("runNowBtn"),
   toggleAutofixBtn: document.getElementById("toggleAutofixBtn"),
   deleteProjectBtn: document.getElementById("deleteProjectBtn"),
-
-  dashboardView: document.getElementById("dashboardView"),
-  fixesView: document.getElementById("fixesView"),
-  uptimeView: document.getElementById("uptimeView"),
-
   projectTitle: document.getElementById("projectTitle"),
   projectSubTitle: document.getElementById("projectSubTitle"),
   statusBadge: document.getElementById("statusBadge"),
-
   metricIncidents: document.getElementById("metricIncidents"),
   metricChecks: document.getElementById("metricChecks"),
   metricAutofix: document.getElementById("metricAutofix"),
   metricLastCheck: document.getElementById("metricLastCheck"),
-
   metricFixes: document.getElementById("metricFixes"),
   metricFixAutofix: document.getElementById("metricFixAutofix"),
-  fixTemplateList: document.getElementById("fixTemplateList"),
-
-  uptimeWidget: document.getElementById("uptimeWidget"),
-  widgetUptimePct: document.getElementById("widgetUptimePct"),
-  widgetTimeline: document.getElementById("widgetTimeline"),
-
   checksList: document.getElementById("checksList"),
   incidentsList: document.getElementById("incidentsList"),
   fixesList: document.getElementById("fixesList"),
-
+  pathsHealthList: document.getElementById("pathsHealthList"),
+  pathLogsTitle: document.getElementById("pathLogsTitle"),
+  pathLogsList: document.getElementById("pathLogsList"),
   fixForm: document.getElementById("fixForm"),
   fixUploadForm: document.getElementById("fixUploadForm"),
   fixPattern: document.getElementById("fixPattern"),
   uploadFixPattern: document.getElementById("uploadFixPattern"),
-
-  templateList: document.getElementById("fixTemplateList"),
-
+  templateList:
+    document.getElementById("templateList") ||
+    document.getElementById("fixTemplateList"),
   uptimeRecent: document.getElementById("uptimeRecent"),
   uptimeTotal: document.getElementById("uptimeTotal"),
   healthyRuns: document.getElementById("healthyRuns"),
   failedRuns: document.getElementById("failedRuns"),
-  timeline: document.getElementById("timeline"),
+  uptimeCanvasWrap: document.getElementById("uptimeCanvasWrap"),
+  uptimeCanvas: document.getElementById("uptimeCanvas"),
+  uptimeTooltip: document.getElementById("uptimeTooltip"),
   runsList: document.getElementById("runsList"),
   logsList: document.getElementById("logsList"),
-
   liveDot: document.getElementById("liveDot"),
   liveText: document.getElementById("liveText"),
   lastUpdatedText: document.getElementById("lastUpdatedText"),
-
   globalError: document.getElementById("globalError"),
   toast: document.getElementById("toast"),
+  rangeBtns: Array.from(document.querySelectorAll(".range-btn")),
+  dashboardView: document.getElementById("dashboardView"),
+  fixesView: document.getElementById("fixesView"),
+  settingsView: document.getElementById("settingsView"),
+  uptimeView: document.getElementById("uptimeView"),
+  settingsForm: document.getElementById("settingsForm"),
+  settingsName: document.getElementById("settingsName"),
+  settingsDomain: document.getElementById("settingsDomain"),
+  settingsInterval: document.getElementById("settingsInterval"),
+  settingsThreshold: document.getElementById("settingsThreshold"),
+  settingsSMTP: document.getElementById("settingsSMTP"),
+  settingsAutofix: document.getElementById("settingsAutofix"),
+  settingsEmails: document.getElementById("settingsEmails"),
+  settingsChecksRows: document.getElementById("settingsChecksRows"),
+  addSettingsCheckBtn: document.getElementById("addSettingsCheckBtn"),
 };
+
+function setCookie(name, value, days) {
+  if (typeof document === "undefined") return;
+  const maxAge = Math.max(60, Math.floor(days * 24 * 60 * 60));
+  document.cookie = `${encodeURIComponent(name)}=${encodeURIComponent(value)}; Max-Age=${maxAge}; Path=/; SameSite=Lax`;
+}
+
+function getCookie(name) {
+  if (typeof document === "undefined" || !document.cookie) return "";
+  const key = `${encodeURIComponent(name)}=`;
+  const parts = document.cookie.split(";");
+  for (const part of parts) {
+    const trimmed = part.trim();
+    if (trimmed.startsWith(key)) {
+      return decodeURIComponent(trimmed.slice(key.length));
+    }
+  }
+  return "";
+}
+
+function getPersistedView() {
+  const view = getCookie(LAST_VIEW_COOKIE);
+  if (!view) return "";
+  return el.views.some((v) => v.id === view) ? view : "";
+}
 
 async function api(path, opts = {}) {
   const headers = { ...(opts.headers || {}) };
@@ -101,23 +143,37 @@ async function api(path, opts = {}) {
   }
 
   const res = await fetch(path, { ...opts, headers });
-  const bodyText = await res.text();
+  const raw = await res.text();
   let parsed = null;
-  if (bodyText) {
+  if (raw) {
     try {
-      parsed = JSON.parse(bodyText);
-    } catch (_) {}
+      parsed = JSON.parse(raw);
+    } catch (_) {
+      parsed = null;
+    }
   }
 
   if (!res.ok) {
-    const error = (parsed && parsed.error) || `request failed (${res.status})`;
-    throw new Error(error);
+    const msg = parsed?.error || `request failed (${res.status})`;
+    throw new Error(msg);
   }
-
   return parsed;
 }
 
-function showBanner(message) {
+function showToast(message, type = "ok") {
+  el.toast.textContent = message;
+  el.toast.classList.remove("hidden");
+  if (type === "error") {
+    el.toast.style.background = "rgba(56, 18, 32, 0.95)";
+    el.toast.style.borderColor = "rgba(232, 80, 106, 0.45)";
+  } else {
+    el.toast.style.background = "rgba(14, 19, 36, 0.96)";
+    el.toast.style.borderColor = "rgba(90, 120, 224, 0.3)";
+  }
+  setTimeout(() => el.toast.classList.add("hidden"), 2600);
+}
+
+function setBanner(message) {
   if (!message) {
     el.globalError.classList.add("hidden");
     el.globalError.textContent = "";
@@ -127,22 +183,33 @@ function showBanner(message) {
   el.globalError.classList.remove("hidden");
 }
 
-function toast(message, type = "ok") {
-  el.toast.textContent = message;
-  el.toast.classList.remove("hidden");
-  if (type === "error") {
-    el.toast.style.borderColor = "rgba(255,93,122,0.45)";
-    el.toast.style.background = "rgba(68,18,33,0.95)";
-  } else {
-    el.toast.style.borderColor = "rgba(104,136,255,0.4)";
-    el.toast.style.background = "rgba(17,26,52,0.95)";
+function setLiveState(mode) {
+  el.liveDot.classList.remove("syncing", "error");
+  if (mode === "syncing") {
+    el.liveDot.classList.add("syncing");
+    el.liveText.textContent = "Syncing data";
+    return;
   }
-  setTimeout(() => el.toast.classList.add("hidden"), 2600);
+  if (mode === "error") {
+    el.liveDot.classList.add("error");
+    el.liveText.textContent = "Live updates degraded";
+    return;
+  }
+  el.liveText.textContent = "Live updates on";
 }
 
-function formatTime(ts) {
+function fmt(ts) {
   if (!ts) return "-";
   return new Date(ts).toLocaleString();
+}
+
+function escapeHtml(v) {
+  return String(v)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function clampText(value, max = 220) {
@@ -150,60 +217,44 @@ function clampText(value, max = 220) {
   return s.length > max ? `${s.slice(0, max)}...` : s;
 }
 
-function setLiveState(mode) {
-  el.liveDot.classList.remove("syncing", "error");
-  if (mode === "syncing") el.liveDot.classList.add("syncing");
-  if (mode === "error") el.liveDot.classList.add("error");
-
-  if (mode === "syncing") el.liveText.textContent = "Syncing data";
-  else if (mode === "error") el.liveText.textContent = "Live updates degraded";
-  else el.liveText.textContent = "Live updates on";
+function setStatusBadge(kind, label) {
+  el.statusBadge.className = `status-badge ${kind}`;
+  el.statusBadge.textContent = label;
 }
 
-function renderProjectSelect() {
-  if (!state.projects.length) {
-    el.projectSelect.innerHTML = `<option value="">No projects</option>`;
-    el.projectSelect.disabled = true;
-    return;
-  }
-  el.projectSelect.disabled = false;
-  el.projectSelect.innerHTML = state.projects
-    .map((p) => {
-      const selected = p.id === state.selectedProjectId ? "selected" : "";
-      return `<option value="${p.id}" ${selected}>${escapeHtml(p.name)} (${escapeHtml(p.domain)})</option>`;
-    })
-    .join("");
-}
-
-function ensureSelectedProject() {
+function pickSelectedProject() {
   if (
     state.selectedProjectId &&
     !state.projects.some((p) => p.id === state.selectedProjectId)
   ) {
     state.selectedProjectId = null;
   }
-  if (!state.selectedProjectId && state.projects.length) {
+  if (!state.selectedProjectId && state.projects.length > 0) {
     state.selectedProjectId = state.projects[0].id;
   }
   state.selectedProject =
     state.projects.find((p) => p.id === state.selectedProjectId) || null;
 }
 
-async function loadProjects() {
-  state.projects = (await api("/v1/projects")) || [];
-  ensureSelectedProject();
-  renderProjectSelect();
-  setControlsEnabled(Boolean(state.selectedProject));
-}
+function renderProjectSelect() {
+  if (state.projects.length === 0) {
+    el.projectSelect.innerHTML = `<option value="">No projects</option>`;
+    el.projectSelect.disabled = true;
+    return;
+  }
 
-function setControlsEnabled(enabled) {
-  el.runNowBtn.disabled = !enabled;
-  el.toggleAutofixBtn.disabled = !enabled;
-  el.deleteProjectBtn.disabled = !enabled;
+  el.projectSelect.disabled = false;
+  el.projectSelect.innerHTML = state.projects
+    .map(
+      (p) =>
+        `<option value="${p.id}" ${p.id === state.selectedProjectId ? "selected" : ""}>${escapeHtml(p.name)} (${escapeHtml(p.domain)})</option>`,
+    )
+    .join("");
 }
 
 function renderTemplateButtons() {
-  el.fixTemplateList.innerHTML = templatePatterns
+  if (!el.templateList) return;
+  el.templateList.innerHTML = errorTemplates
     .map(
       (tpl, idx) =>
         `<button class="template-btn" data-template-index="${idx}">${escapeHtml(tpl.label)}</button>`,
@@ -211,274 +262,798 @@ function renderTemplateButtons() {
     .join("");
 }
 
-function selectView(viewId) {
-  state.activeView = viewId;
-  document.cookie = `kraken_view=${viewId};path=/;max-age=31536000;SameSite=Lax`;
-  [el.dashboardView, el.fixesView, el.uptimeView].forEach((v) =>
-    v.classList.remove("active"),
+function setActionButtons(enabled) {
+  if (el.runNowBtn) el.runNowBtn.disabled = !enabled;
+  if (el.toggleAutofixBtn) el.toggleAutofixBtn.disabled = !enabled;
+  if (el.deleteProjectBtn) el.deleteProjectBtn.disabled = !enabled;
+  if (el.addSettingsCheckBtn) el.addSettingsCheckBtn.disabled = !enabled;
+}
+
+function hideUptimeTooltip() {
+  if (!el.uptimeTooltip) return;
+  el.uptimeTooltip.classList.add("hidden");
+}
+
+function scheduleUptimeRender() {
+  state.uptimeRenderToken += 1;
+  const token = state.uptimeRenderToken;
+
+  const attemptRender = (triesLeft) => {
+    if (token !== state.uptimeRenderToken) return;
+    const canvas = el.uptimeCanvas;
+    if (!canvas) return;
+
+    const rect = canvas.getBoundingClientRect();
+    if ((rect.width < 40 || rect.height < 100) && triesLeft > 0) {
+      requestAnimationFrame(() => attemptRender(triesLeft - 1));
+      return;
+    }
+    renderUptimeCanvas();
+  };
+
+  requestAnimationFrame(() => requestAnimationFrame(() => attemptRender(10)));
+}
+
+function pickUptimeHoverIndex(clientX) {
+  const canvas = el.uptimeCanvas;
+  const points = state.data.uptime?.points || [];
+  if (!canvas || points.length === 0) {
+    return null;
+  }
+
+  const rect = canvas.getBoundingClientRect();
+  if (rect.width < 40 || rect.height < 100) {
+    return null;
+  }
+
+  const padX = 28;
+  const chartW = rect.width - padX * 2;
+  if (chartW <= 0) {
+    return null;
+  }
+
+  const x = clientX - rect.left;
+  const step = points.length > 1 ? chartW / (points.length - 1) : chartW;
+  const raw = step > 0 ? Math.round((x - padX) / step) : 0;
+  const idx = Math.max(0, Math.min(points.length - 1, raw));
+  return Number.isFinite(idx) ? idx : null;
+}
+
+function syncSelectedPath(pathHealth) {
+  if (!Array.isArray(pathHealth) || pathHealth.length === 0) {
+    state.selectedPathCheckId = null;
+    state.selectedPathTarget = "";
+    return;
+  }
+
+  const match = pathHealth.find(
+    (p) => p.check_id === state.selectedPathCheckId,
   );
-  el[viewId].classList.add("active");
-  el.navBtns.forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.view === viewId);
-  });
+  if (match) {
+    state.selectedPathTarget = match.target;
+    return;
+  }
+  state.selectedPathCheckId = pathHealth[0].check_id;
+  state.selectedPathTarget = pathHealth[0].target;
 }
 
-function setEmptyState() {
-  el.projectTitle.textContent = "None";
-  el.projectSubTitle.textContent = "Create or select a project.";
-  setStatusBadge("unknown", "Unknown");
-  el.metricIncidents.textContent = "0";
-  el.metricChecks.textContent = "0";
-  el.metricAutofix.textContent = "Off";
-  el.metricLastCheck.textContent = "-";
-  el.checksList.innerHTML = "";
-  el.incidentsList.innerHTML = "";
-  el.fixesList.innerHTML = "";
-  el.timeline.innerHTML = "";
-  el.runsList.innerHTML = "";
-  el.logsList.innerHTML = "";
-  el.uptimeRecent.textContent = "0%";
-  el.uptimeTotal.textContent = "0%";
-  el.healthyRuns.textContent = "0";
-  el.failedRuns.textContent = "0";
-  el.metricFixes.textContent = "0";
-  el.metricFixAutofix.textContent = "Off";
-  el.widgetUptimePct.textContent = "-";
-  el.widgetTimeline.innerHTML = "";
+function statusToneForPath(path) {
+  if (!path) return "unknown";
+  if (path.last_status === "failed") return "down";
+  if (path.last_status === "healthy") return "up";
+  return "unknown";
 }
 
-function setStatusBadge(kind, label) {
-  el.statusBadge.className = `status-badge ${kind}`;
-  el.statusBadge.textContent = label;
-}
-
-function computeStatus() {
-  const openIncidents = state.data.incidents.filter((i) => i.status === "open");
-  const latestRun = state.data.runs[0] || null;
+function renderPathHealthPanel() {
+  if (!el.pathsHealthList || !el.pathLogsList || !el.pathLogsTitle) return;
 
   if (!state.selectedProject) {
-    return { kind: "unknown", label: "Unknown" };
+    el.pathsHealthList.innerHTML = `<div class="list-item"><div class="main">No project selected</div></div>`;
+    el.pathLogsTitle.textContent = "Select a path to view health logs.";
+    el.pathLogsList.innerHTML = `<div class="list-item"><div class="main">No path logs</div></div>`;
+    return;
   }
-  if (openIncidents.length > 0) {
-    return { kind: "down", label: "Down" };
+
+  const paths = state.data.pathHealth || [];
+  if (!paths.length) {
+    el.pathsHealthList.innerHTML = `<div class="list-item"><div class="main">No paths configured</div></div>`;
+    el.pathLogsTitle.textContent = "Select a path to view health logs.";
+    el.pathLogsList.innerHTML = `<div class="list-item"><div class="main">No path logs</div></div>`;
+    return;
   }
-  if (!latestRun) {
-    return { kind: "unknown", label: "No Data" };
+
+  el.pathsHealthList.innerHTML = paths
+    .map((p) => {
+      const tone = statusToneForPath(p);
+      const successPct = `${((p.success_rate_1h || 0) * 100).toFixed(1)}%`;
+      const active = p.check_id === state.selectedPathCheckId ? "active" : "";
+      return `
+        <div class="list-item ${active}">
+          <div class="main">
+            <strong class="status-${tone}">${escapeHtml((p.last_status || "unknown").toUpperCase())}</strong>
+            <span>${escapeHtml(p.target)}</span>
+            <span class="meta">${escapeHtml((p.type || "").toUpperCase())} | 1h success ${successPct} | runs ${p.runs_1h ?? 0}</span>
+            <span class="meta">last checked ${fmt(p.last_checked_at)}${p.last_error_message ? ` | ${escapeHtml(clampText(p.last_error_message, 90))}` : ""}</span>
+          </div>
+          <div class="inline-actions">
+            <button class="btn secondary" data-path-check-id="${p.check_id}">View Logs</button>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+
+  const selectedPath = paths.find(
+    (p) => p.check_id === state.selectedPathCheckId,
+  );
+  if (selectedPath) {
+    el.pathLogsTitle.textContent = `Logs: ${selectedPath.target}`;
+  } else {
+    el.pathLogsTitle.textContent = "Select a path to view health logs.";
   }
-  if (latestRun.status === "failed") {
-    return { kind: "warn", label: "Warning" };
+
+  const runs = state.data.pathRuns || [];
+  el.pathLogsList.innerHTML = runs.length
+    ? runs
+        .map(
+          (run) => `
+          <div class="list-item">
+            <div class="main">
+              <strong class="status-${run.status === "healthy" ? "ok" : "error"}">${escapeHtml(run.status.toUpperCase())}</strong>
+              <span>response ${run.response_time_ms ?? "-"}ms${run.error_message ? ` | ${escapeHtml(clampText(run.error_message, 120))}` : ""}</span>
+              <span class="meta">${fmt(run.created_at)}</span>
+            </div>
+          </div>
+        `,
+        )
+        .join("")
+    : `<div class="list-item"><div class="main">No logs for selected path</div></div>`;
+}
+
+function selectView(viewId) {
+  const safeViewId = el[viewId] ? viewId : "dashboardView";
+  state.activeView = safeViewId;
+  el.views.forEach((v) => v.classList.remove("active"));
+  if (el[safeViewId]) {
+    el[safeViewId].classList.add("active");
   }
-  return { kind: "up", label: "Healthy" };
+  el.navBtns.forEach((btn) =>
+    btn.classList.toggle("active", btn.dataset.view === safeViewId),
+  );
+
+  setCookie(LAST_VIEW_COOKIE, safeViewId, VIEW_COOKIE_DAYS);
+
+  if (safeViewId === "uptimeView") {
+    scheduleUptimeRender();
+  } else {
+    state.uptimeHoverIndex = null;
+    hideUptimeTooltip();
+  }
+}
+
+function setRange(range) {
+  state.activeWindow = range;
+  if (el.rangeBtns) {
+    el.rangeBtns.forEach((btn) =>
+      btn.classList.toggle("active", btn.dataset.range === range),
+    );
+  }
+}
+
+async function loadProjects() {
+  state.projects = (await api("/v1/projects")) || [];
+  pickSelectedProject();
+  renderProjectSelect();
+  setActionButtons(Boolean(state.selectedProject));
 }
 
 function renderDashboard() {
   if (!state.selectedProject) {
-    setEmptyState();
+    el.projectTitle.textContent = "None";
+    el.projectSubTitle.textContent = "Create or select a project.";
+    setStatusBadge("unknown", "Unknown");
+    el.metricIncidents.textContent = "0";
+    el.metricChecks.textContent = "0";
+    el.metricAutofix.textContent = "Off";
+    el.metricLastCheck.textContent = "-";
+    if (el.metricFixes) el.metricFixes.textContent = "0";
+    if (el.metricFixAutofix) el.metricFixAutofix.textContent = "Off";
+    el.checksList.innerHTML = "";
+    el.incidentsList.innerHTML = "";
+    el.fixesList.innerHTML = "";
+    state.selectedPathCheckId = null;
+    state.data.pathHealth = [];
+    state.data.pathRuns = [];
+    renderPathHealthPanel();
     return;
   }
 
-  const status = computeStatus();
+  const openIncidents = state.data.incidents.filter(
+    (i) => i.status === "open",
+  ).length;
   const latestRun = state.data.runs[0] || null;
-  const openIncidents = state.data.incidents.filter((i) => i.status === "open");
+
+  if (openIncidents > 0) setStatusBadge("down", "Down");
+  else if (!latestRun) setStatusBadge("unknown", "No Data");
+  else if (latestRun.status === "failed") setStatusBadge("warn", "Warning");
+  else setStatusBadge("up", "Healthy");
 
   el.projectTitle.textContent = state.selectedProject.name;
   el.projectSubTitle.textContent = `${state.selectedProject.domain} | interval ${state.selectedProject.check_interval_sec}s | threshold ${state.selectedProject.failure_threshold}`;
-  setStatusBadge(status.kind, status.label);
-
-  el.metricIncidents.textContent = String(openIncidents.length);
+  el.metricIncidents.textContent = String(openIncidents);
   el.metricChecks.textContent = String(state.data.checks.length);
   el.metricAutofix.textContent = state.selectedProject.autofix_enabled
     ? "On"
     : "Off";
-  el.metricLastCheck.textContent = latestRun
-    ? formatTime(latestRun.created_at)
-    : "-";
+  el.metricLastCheck.textContent = latestRun ? fmt(latestRun.created_at) : "-";
+  if (el.metricFixes)
+    el.metricFixes.textContent = String(state.data.fixes.length);
+  if (el.metricFixAutofix)
+    el.metricFixAutofix.textContent = state.selectedProject.autofix_enabled
+      ? "On"
+      : "Off";
 
-  renderChecks();
-  renderIncidents();
-  renderFixes();
-  renderFixesView();
-  renderUptimeWidget();
+  el.checksList.innerHTML = state.data.checks.length
+    ? state.data.checks
+        .map(
+          (c) => `
+          <div class="list-item">
+            <div class="main">
+              <strong>${escapeHtml(c.type.toUpperCase())}</strong>
+              <span class="meta">${escapeHtml(c.target)}</span>
+              <span class="meta">timeout ${c.timeout_ms}ms | expected ${c.expected_status ?? "2xx/3xx"}</span>
+            </div>
+          </div>`,
+        )
+        .join("")
+    : `<div class="list-item"><div class="main">No checks configured</div></div>`;
+
+  el.incidentsList.innerHTML = state.data.incidents.length
+    ? state.data.incidents
+        .map(
+          (i) => `
+          <div class="list-item">
+            <div class="main">
+              <strong class="status-${i.status === "open" ? "down" : "up"}">${escapeHtml(i.status.toUpperCase())}</strong>
+              <span>${escapeHtml(clampText(i.error_message, 180))}</span>
+              <span class="meta">started ${fmt(i.started_at)}${i.resolved_at ? ` | resolved ${fmt(i.resolved_at)}` : ""}</span>
+            </div>
+          </div>`,
+        )
+        .join("")
+    : `<div class="list-item"><div class="main">No incidents</div></div>`;
+
+  el.fixesList.innerHTML = state.data.fixes.length
+    ? state.data.fixes
+        .map(
+          (f) => `
+          <div class="list-item">
+            <div class="main">
+              <strong>${escapeHtml(f.name)}</strong>
+              <span class="meta">${escapeHtml(f.type)} | ${escapeHtml(f.script_path)} | timeout ${f.timeout_sec}s</span>
+              <span class="meta">pattern: ${escapeHtml(clampText(f.supported_error_pattern, 120))}</span>
+            </div>
+            <div class="inline-actions">
+              <button class="btn secondary" data-run-fix-id="${f.id}">Run</button>
+            </div>
+          </div>`,
+        )
+        .join("")
+    : `<div class="list-item"><div class="main">No fixes attached</div></div>`;
+
+  renderPathHealthPanel();
 }
 
-function renderChecks() {
-  if (!state.data.checks.length) {
-    el.checksList.innerHTML = `<div class="list-item"><div class="main">No checks configured</div></div>`;
+function renderUptimeCanvas() {
+  const canvas = el.uptimeCanvas;
+  if (!canvas) return;
+
+  const points = state.data.uptime?.points || [];
+  const rect = canvas.getBoundingClientRect();
+  if (rect.width < 40 || rect.height < 100) {
+    hideUptimeTooltip();
     return;
   }
 
-  el.checksList.innerHTML = state.data.checks
-    .map((c) => {
-      const type = c.type.toUpperCase();
-      return `
-      <div class="list-item">
-        <div class="main">
-          <strong>${escapeHtml(type)}</strong>
-          <span class="meta">${escapeHtml(c.target)}</span>
-          <span class="meta">timeout ${c.timeout_ms}ms | expected ${c.expected_status ?? "2xx/3xx"}</span>
-        </div>
-      </div>`;
-    })
-    .join("");
-}
+  const dpr = window.devicePixelRatio || 1;
+  const width = Math.max(300, Math.floor(rect.width * dpr));
+  const height = Math.max(180, Math.floor(rect.height * dpr));
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+  }
 
-function renderIncidents() {
-  if (!state.data.incidents.length) {
-    el.incidentsList.innerHTML = `<div class="list-item"><div class="main">No incidents</div></div>`;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  ctx.clearRect(0, 0, width, height);
+
+  const bg = ctx.createLinearGradient(0, 0, 0, height);
+  bg.addColorStop(0, "rgba(12, 18, 36, 0.98)");
+  bg.addColorStop(1, "rgba(8, 12, 24, 0.96)");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, width, height);
+
+  const padX = 28 * dpr;
+  const padY = 16 * dpr;
+  const chartW = width - padX * 2;
+  const chartH = height - padY * 2;
+
+  ctx.strokeStyle = "rgba(137,159,246,0.18)";
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = padY + (chartH * i) / 4;
+    ctx.beginPath();
+    ctx.moveTo(padX, y);
+    ctx.lineTo(padX + chartW, y);
+    ctx.stroke();
+  }
+
+  if (points.length === 0) {
+    hideUptimeTooltip();
+    ctx.fillStyle = "rgba(156,168,214,0.9)";
+    ctx.font = `${12 * dpr}px JetBrains Mono`;
+    ctx.fillText("No uptime data yet", padX, height / 2);
     return;
   }
 
-  el.incidentsList.innerHTML = state.data.incidents
-    .map((i) => {
-      const kind = i.status === "open" ? "down" : "up";
-      return `
-      <div class="list-item">
-        <div class="main">
-          <strong class="status-${kind}">${escapeHtml(i.status.toUpperCase())}</strong>
-          <span>${escapeHtml(clampText(i.error_message, 170))}</span>
-          <span class="meta">started ${formatTime(i.started_at)}${i.resolved_at ? ` | resolved ${formatTime(i.resolved_at)}` : ""}</span>
-        </div>
-      </div>`;
-    })
-    .join("");
-}
-
-function renderFixes() {
-  if (!state.data.fixes.length) {
-    el.fixesList.innerHTML = `<div class="list-item"><div class="main">No fixes attached</div></div>`;
+  const step = points.length > 1 ? chartW / (points.length - 1) : chartW;
+  const hasAnyData = points.some((p) => (p.up_seconds || 0) + (p.down_seconds || 0) > 0);
+  if (!hasAnyData) {
+    hideUptimeTooltip();
+    ctx.fillStyle = "rgba(156,168,214,0.9)";
+    ctx.font = `${12 * dpr}px JetBrains Mono`;
+    ctx.fillText("No recent data", padX, height / 2);
     return;
   }
 
-  el.fixesList.innerHTML = state.data.fixes
-    .map((f) => {
-      return `
-      <div class="list-item">
-        <div class="main">
-          <strong>${escapeHtml(f.name)}</strong>
-          <span class="meta">${escapeHtml(f.type)} | ${escapeHtml(f.script_path)} | timeout ${f.timeout_sec}s</span>
-          <span class="meta">pattern: ${escapeHtml(clampText(f.supported_error_pattern, 120))}</span>
-        </div>
-        <div class="inline-actions">
-          <button class="btn secondary" data-run-fix-id="${f.id}">Run</button>
-        </div>
-      </div>`;
-    })
-    .join("");
-}
+  const drawRoundedRect = (x, y, w, h, r) => {
+    const radius = Math.max(0, Math.min(r, w / 2, h / 2));
+    ctx.beginPath();
+    ctx.moveTo(x + radius, y);
+    ctx.lineTo(x + w - radius, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
+    ctx.lineTo(x + w, y + h - radius);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
+    ctx.lineTo(x + radius, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - radius);
+    ctx.lineTo(x, y + radius);
+    ctx.quadraticCurveTo(x, y, x + radius, y);
+    ctx.closePath();
+  };
 
-function renderFixesView() {
-  if (!state.selectedProject) return;
-  el.metricFixes.textContent = String(state.data.fixes.length);
-  el.metricFixAutofix.textContent = state.selectedProject.autofix_enabled
-    ? "On"
-    : "Off";
-}
+  const barW = Math.max(2 * dpr, Math.floor((chartW / points.length) * 0.92));
+  let hoverDraw = null;
+  points.forEach((p, idx) => {
+    const known = (p.up_seconds || 0) + (p.down_seconds || 0);
+    if (known <= 0) {
+      return;
+    }
+    const ratio = Math.max(0, Math.min(1, p.uptime_ratio ?? 0));
+    const x = padX + idx * step - barW / 2;
+    const y = padY + (1 - ratio) * chartH;
+    const h = chartH - (y - padY);
 
-function renderUptimeWidget() {
-  const runs = state.data.runs;
-  if (!runs.length) {
-    el.widgetUptimePct.textContent = "-";
-    el.widgetUptimePct.className = "uptime-widget-pct";
-    el.widgetTimeline.innerHTML = "";
+    let color = "rgba(32,232,138,0.82)";
+    if (p.down_seconds > 0) color = "rgba(232,80,106,0.85)";
+
+    const roundedX = Math.floor(x);
+    const roundedY = Math.floor(y);
+    const roundedW = Math.ceil(barW);
+    const roundedH = Math.max(1, Math.ceil(h));
+    const radius = Math.min(2.5 * dpr, roundedW / 2, roundedH / 2);
+
+    drawRoundedRect(roundedX, roundedY, roundedW, roundedH, radius);
+    ctx.fillStyle = color;
+    ctx.fill();
+
+    if (state.uptimeHoverIndex === idx) {
+      hoverDraw = {
+        idx,
+        point: p,
+        ratio,
+        x,
+        y,
+      };
+      ctx.strokeStyle = "rgba(221, 236, 255, 0.95)";
+      ctx.lineWidth = Math.max(1, Math.floor(dpr));
+      drawRoundedRect(roundedX, roundedY, roundedW, roundedH, radius);
+      ctx.stroke();
+    }
+  });
+
+  ctx.fillStyle = "rgba(156,168,214,0.9)";
+  ctx.font = `${10 * dpr}px JetBrains Mono`;
+  ctx.fillText("100%", 2 * dpr, padY + 10 * dpr);
+  ctx.fillText("0%", 10 * dpr, padY + chartH);
+
+  const first = points[0];
+  const last = points[points.length - 1];
+  if (first && last) {
+    const firstLabel = new Date(first.start).toLocaleString();
+    const lastLabel = new Date(last.end).toLocaleString();
+    const labelY = height - 4 * dpr;
+    ctx.fillStyle = "rgba(156,168,214,0.85)";
+    ctx.font = `${10 * dpr}px JetBrains Mono`;
+    ctx.fillText(firstLabel, padX, labelY);
+    const lastWidth = ctx.measureText(lastLabel).width;
+    ctx.fillText(lastLabel, padX + chartW - lastWidth, labelY);
+  }
+
+  if (!hoverDraw) {
+    hideUptimeTooltip();
     return;
   }
 
-  const slice = runs.slice(0, 60);
-  const healthy = slice.filter((r) => r.status === "healthy").length;
-  const pct = ((healthy / slice.length) * 100).toFixed(1);
+  if (el.uptimeTooltip && el.uptimeCanvasWrap) {
+    const p = hoverDraw.point;
+    const known = (p.up_seconds || 0) + (p.down_seconds || 0);
+    const status = p.down_seconds > 0 ? "DOWN" : "UP";
+    const pct = known > 0 ? ((100 * (p.up_seconds || 0)) / known).toFixed(2) : "0.00";
+    const startLabel = new Date(p.start).toLocaleString();
+    const endLabel = new Date(p.end).toLocaleString();
+    el.uptimeTooltip.innerHTML = `${status} ${pct}%<br>${startLabel}<br>${endLabel}<br>up ${p.up_seconds || 0}s | down ${p.down_seconds || 0}s`;
+    el.uptimeTooltip.classList.remove("hidden");
 
-  el.widgetUptimePct.textContent = `${pct}%`;
-  if (parseFloat(pct) >= 95) {
-    el.widgetUptimePct.className = "uptime-widget-pct status-ok";
-  } else if (parseFloat(pct) >= 80) {
-    el.widgetUptimePct.className = "uptime-widget-pct status-warn";
-  } else {
-    el.widgetUptimePct.className = "uptime-widget-pct status-error";
+    const padXCss = 28;
+    const padYCss = 16;
+    const chartWCss = rect.width - padXCss * 2;
+    const chartHCss = rect.height - padYCss * 2;
+    const stepCss = points.length > 1 ? chartWCss / (points.length - 1) : chartWCss;
+    const xCss = padXCss + hoverDraw.idx * stepCss;
+    const yCss = padYCss + (1 - hoverDraw.ratio) * chartHCss;
+
+    const tipW = el.uptimeTooltip.offsetWidth || 200;
+    const tipH = el.uptimeTooltip.offsetHeight || 70;
+    const left = Math.max(8, Math.min(rect.width - tipW - 8, xCss + 12));
+    const top = Math.max(8, Math.min(rect.height - tipH - 8, yCss - tipH - 12));
+    el.uptimeTooltip.style.left = `${left}px`;
+    el.uptimeTooltip.style.top = `${top}px`;
   }
-
-  el.widgetTimeline.innerHTML = slice
-    .slice(0, 60)
-    .reverse()
-    .map(
-      (r) =>
-        `<span class="tick ${r.status === "healthy" ? "healthy" : "failed"}" title="${escapeHtml(r.status)} ${escapeHtml(formatTime(r.created_at))}"></span>`,
-    )
-    .join("");
 }
 
-function renderUptime() {
-  const runs = state.data.runs;
-  if (!runs.length) {
+function renderUptimePanel() {
+  const uptime = state.data.uptime;
+  if (!uptime || !uptime.points || uptime.points.length === 0) {
     el.uptimeRecent.textContent = "0%";
     el.uptimeTotal.textContent = "0%";
     el.healthyRuns.textContent = "0";
     el.failedRuns.textContent = "0";
-    el.timeline.innerHTML = `<div class="list-item">No runs yet</div>`;
-    el.runsList.innerHTML = "";
-    el.logsList.innerHTML = "";
+    el.runsList.innerHTML = `<div class="list-item"><div class="main">No check runs yet</div></div>`;
+    el.logsList.innerHTML = `<div class="list-item"><div class="main">No logs yet</div></div>`;
+    if (state.activeView === "uptimeView") {
+      scheduleUptimeRender();
+    } else {
+      state.uptimeHoverIndex = null;
+      hideUptimeTooltip();
+    }
     return;
   }
 
-  const total = runs.length;
-  const healthy = runs.filter((r) => r.status === "healthy").length;
-  const failed = total - healthy;
-  const recentSlice = runs.slice(0, Math.min(30, runs.length));
-  const recentHealthy = recentSlice.filter(
-    (r) => r.status === "healthy",
-  ).length;
+  let upSeconds = 0;
+  let downSeconds = 0;
+  let knownSeconds = 0;
+  let totalSeconds = 0;
 
-  const pctTotal = ((healthy / total) * 100).toFixed(1);
-  const pctRecent = ((recentHealthy / recentSlice.length) * 100).toFixed(1);
+  uptime.points.forEach((p) => {
+    const up = Number(p.up_seconds || 0);
+    const down = Number(p.down_seconds || 0);
+    const duration = Math.max(0, Math.round((new Date(p.end).getTime() - new Date(p.start).getTime()) / 1000));
 
-  el.uptimeTotal.textContent = `${pctTotal}%`;
-  el.uptimeRecent.textContent = `${pctRecent}%`;
-  el.healthyRuns.textContent = String(healthy);
-  el.failedRuns.textContent = String(failed);
+    upSeconds += up;
+    downSeconds += down;
+    knownSeconds += up + down;
+    totalSeconds += duration;
+  });
 
-  el.timeline.innerHTML = runs
-    .slice(0, 120)
-    .reverse()
-    .map(
-      (r) =>
-        `<span class="tick ${r.status === "healthy" ? "healthy" : "failed"}" title="${escapeHtml(r.status)} ${escapeHtml(formatTime(r.created_at))}"></span>`,
-    )
-    .join("");
+  const uptimePct = knownSeconds > 0 ? (100 * upSeconds) / knownSeconds : 0;
+  const coveragePctRaw =
+    totalSeconds > 0 ? (100 * knownSeconds) / totalSeconds : 0;
+  const coveragePct = Math.max(0, Math.min(100, coveragePctRaw));
 
-  el.runsList.innerHTML = runs
-    .slice(0, 120)
-    .map((r) => {
-      const kind = r.status === "healthy" ? "ok" : "error";
-      return `
-      <div class="list-item">
-        <div class="main">
-          <strong class="status-${kind}">${escapeHtml(r.status.toUpperCase())}</strong>
-          <span>check ${r.check_id} | ${r.response_time_ms ?? "-"}ms${r.error_message ? ` | ${escapeHtml(clampText(r.error_message, 120))}` : ""}</span>
-          <span class="meta">${formatTime(r.created_at)}</span>
-        </div>
-      </div>`;
+  el.uptimeRecent.textContent = `${uptimePct.toFixed(2)}%`;
+  el.uptimeTotal.textContent = `${coveragePct.toFixed(2)}%`;
+  el.healthyRuns.textContent = String(upSeconds);
+  el.failedRuns.textContent = String(downSeconds);
+
+  el.runsList.innerHTML = state.data.runs.length
+    ? state.data.runs
+        .slice(0, 120)
+        .map(
+          (r) => `
+          <div class="list-item">
+            <div class="main">
+              <strong class="status-${r.status === "healthy" ? "ok" : "error"}">${escapeHtml(r.status.toUpperCase())}</strong>
+              <span>check ${r.check_id} | ${r.response_time_ms ?? "-"}ms${r.error_message ? ` | ${escapeHtml(clampText(r.error_message, 130))}` : ""}</span>
+              <span class="meta">${fmt(r.created_at)}</span>
+            </div>
+          </div>`,
+        )
+        .join("")
+    : `<div class="list-item"><div class="main">No check runs yet</div></div>`;
+
+  el.logsList.innerHTML = state.data.logs.length
+    ? state.data.logs
+        .slice(0, 150)
+        .map(
+          (l) => `
+          <div class="list-item">
+            <div class="main">
+              <strong class="status-${l.level === "error" ? "error" : l.level === "warn" ? "warn" : "ok"}">[${escapeHtml(l.level)}]</strong>
+              <span>${escapeHtml(clampText(l.message, 190))}</span>
+              <span class="meta">${fmt(l.timestamp)}</span>
+            </div>
+          </div>`,
+        )
+        .join("")
+    : `<div class="list-item"><div class="main">No logs yet</div></div>`;
+
+  if (state.activeView === "uptimeView") {
+    scheduleUptimeRender();
+  } else {
+    state.uptimeHoverIndex = null;
+    hideUptimeTooltip();
+  }
+}
+
+function updateProjectInState(project) {
+  if (!project) return;
+  const idx = state.projects.findIndex((p) => p.id === project.id);
+  if (idx >= 0) state.projects[idx] = project;
+  state.selectedProject = project;
+  state.selectedProjectId = project.id;
+}
+
+function renderSettingsChecksRows(checks) {
+  if (!el.settingsChecksRows) return;
+  const rows = Array.isArray(checks) ? checks : [];
+  el.settingsChecksRows.innerHTML = rows.length
+    ? rows
+        .map((check) => {
+          const expected = check.expected_status ?? "";
+          const selectedType = (type) =>
+            check.type === type ? "selected" : "";
+          return `
+            <div class="settings-check-row" data-check-id="${check.id || ""}">
+              <div class="cell">
+                <span class="label">Type</span>
+                <select data-check-field="type">
+                  <option value="http" ${selectedType("http")}>http</option>
+                  <option value="tcp" ${selectedType("tcp")}>tcp</option>
+                  <option value="ping" ${selectedType("ping")}>ping</option>
+                </select>
+              </div>
+              <div class="cell">
+                <span class="label">Target</span>
+                <input data-check-field="target" class="path-target" value="${escapeHtml(check.target || "")}" placeholder="http://localhost:3000/" />
+              </div>
+              <div class="cell">
+                <span class="label">Timeout (ms)</span>
+                <input data-check-field="timeout_ms" type="number" min="100" value="${check.timeout_ms || 5000}" />
+              </div>
+              <div class="cell">
+                <span class="label">Expected</span>
+                <input data-check-field="expected_status" type="number" min="100" max="599" value="${expected}" placeholder="200" />
+              </div>
+              <div class="cell">
+                <span class="label">Action</span>
+                <button type="button" class="btn danger" data-remove-check="1">Remove</button>
+              </div>
+            </div>
+          `;
+        })
+        .join("")
+    : "";
+}
+
+function addSettingsCheckRow(defaults = {}) {
+  if (!el.settingsChecksRows) return;
+  const selectedType = (type) =>
+    (defaults.type || "http") === type ? "selected" : "";
+  const row = document.createElement("div");
+  row.className = "settings-check-row";
+  row.dataset.checkId = defaults.id ? String(defaults.id) : "";
+  row.innerHTML = `
+    <div class="cell">
+      <span class="label">Type</span>
+      <select data-check-field="type">
+        <option value="http" ${selectedType("http")}>http</option>
+        <option value="tcp" ${selectedType("tcp")}>tcp</option>
+        <option value="ping" ${selectedType("ping")}>ping</option>
+      </select>
+    </div>
+    <div class="cell">
+      <span class="label">Target</span>
+      <input data-check-field="target" class="path-target" value="${escapeHtml(defaults.target || "")}" placeholder="http://localhost:3000/" />
+    </div>
+    <div class="cell">
+      <span class="label">Timeout (ms)</span>
+      <input data-check-field="timeout_ms" type="number" min="100" value="${defaults.timeout_ms || 5000}" />
+    </div>
+    <div class="cell">
+      <span class="label">Expected</span>
+      <input data-check-field="expected_status" type="number" min="100" max="599" value="${defaults.expected_status ?? ""}" placeholder="200" />
+    </div>
+    <div class="cell">
+      <span class="label">Action</span>
+      <button type="button" class="btn danger" data-remove-check="1">Remove</button>
+    </div>
+  `;
+  el.settingsChecksRows.appendChild(row);
+}
+
+function renderSettingsForm() {
+  if (!el.settingsForm) return;
+
+  if (!state.selectedProject) {
+    el.settingsForm.reset();
+    if (el.settingsChecksRows) el.settingsChecksRows.innerHTML = "";
+    if (el.settingsSMTP)
+      el.settingsSMTP.innerHTML = `<option value="">No SMTP profiles</option>`;
+    return;
+  }
+
+  el.settingsName.value = state.selectedProject.name || "";
+  el.settingsDomain.value = state.selectedProject.domain || "";
+  el.settingsInterval.value = String(
+    state.selectedProject.check_interval_sec || 30,
+  );
+  el.settingsThreshold.value = String(
+    state.selectedProject.failure_threshold || 3,
+  );
+  el.settingsAutofix.checked = Boolean(state.selectedProject.autofix_enabled);
+  el.settingsEmails.value = (state.selectedProject.alert_emails || []).join(
+    ", ",
+  );
+
+  const smtpProfiles = state.data.smtpProfiles || [];
+  const selectedSMTP = state.selectedProject.smtp_profile_id;
+  const smtpOptions = [`<option value="">None</option>`];
+  smtpProfiles.forEach((profile) => {
+    smtpOptions.push(
+      `<option value="${profile.id}" ${selectedSMTP === profile.id ? "selected" : ""}>#${profile.id} ${escapeHtml(profile.host)}:${profile.port} (${escapeHtml(profile.from_email)})</option>`,
+    );
+  });
+  el.settingsSMTP.innerHTML = smtpOptions.join("");
+
+  renderSettingsChecksRows(state.data.checks || []);
+}
+
+function collectSettingsChecks() {
+  if (!el.settingsChecksRows) return [];
+  const rows = Array.from(
+    el.settingsChecksRows.querySelectorAll(".settings-check-row"),
+  );
+  return rows
+    .map((row) => {
+      const checkIDRaw = row.dataset.checkId
+        ? Number(row.dataset.checkId)
+        : null;
+      const type =
+        row.querySelector('[data-check-field="type"]')?.value?.trim() || "http";
+      const target =
+        row.querySelector('[data-check-field="target"]')?.value?.trim() || "";
+      const timeoutMs = Number(
+        row.querySelector('[data-check-field="timeout_ms"]')?.value || "5000",
+      );
+      const expectedRaw =
+        row
+          .querySelector('[data-check-field="expected_status"]')
+          ?.value?.trim() || "";
+      const expected = expectedRaw ? Number(expectedRaw) : null;
+      if (!target) {
+        return null;
+      }
+      return {
+        id: checkIDRaw && checkIDRaw > 0 ? checkIDRaw : undefined,
+        type,
+        target,
+        timeout_ms:
+          Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 5000,
+        expected_status:
+          expected && Number.isFinite(expected) ? expected : null,
+      };
     })
-    .join("");
+    .filter(Boolean);
+}
 
-  el.logsList.innerHTML = state.data.logs
-    .slice(0, 150)
-    .map((l) => {
-      const levelClass =
-        l.level === "error" ? "error" : l.level === "warn" ? "warn" : "ok";
-      return `
-      <div class="list-item">
-        <div class="main">
-          <strong class="status-${levelClass}">[${escapeHtml(l.level)}]</strong>
-          <span>${escapeHtml(clampText(l.message, 170))}</span>
-          <span class="meta">${formatTime(l.timestamp)}</span>
-        </div>
-      </div>`;
-    })
-    .join("");
+async function loadProjectSettings() {
+  if (!state.selectedProject) {
+    renderSettingsForm();
+    return;
+  }
+  const projectID = state.selectedProject.id;
+  const settings = await api(`/v1/projects/${projectID}/settings`);
+  if (!state.selectedProject || state.selectedProject.id !== projectID) return;
+
+  updateProjectInState(settings.project);
+  state.data.checks = settings.checks || [];
+  state.data.smtpProfiles = settings.smtp_profiles || [];
+  renderProjectSelect();
+  renderDashboard();
+  renderSettingsForm();
+}
+
+async function saveSettings(event) {
+  event.preventDefault();
+  if (!state.selectedProject) return;
+
+  const checks = collectSettingsChecks();
+  const smtpRaw = el.settingsSMTP.value.trim();
+  const smtpProfileID = smtpRaw ? Number(smtpRaw) : null;
+  const emails = (el.settingsEmails.value || "")
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean);
+
+  const payload = {
+    name: el.settingsName.value.trim(),
+    domain: el.settingsDomain.value.trim(),
+    check_interval_sec: Number(el.settingsInterval.value),
+    failure_threshold: Number(el.settingsThreshold.value),
+    autofix_enabled: Boolean(el.settingsAutofix.checked),
+    smtp_profile_id: smtpProfileID && smtpProfileID > 0 ? smtpProfileID : null,
+    alert_emails: emails,
+    checks,
+  };
+
+  if (!payload.name || !payload.domain) {
+    showToast("Name and domain are required", "error");
+    return;
+  }
+
+  try {
+    const result = await api(
+      `/v1/projects/${state.selectedProject.id}/settings`,
+      {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      },
+    );
+    updateProjectInState(result.project);
+    state.data.checks = result.checks || [];
+    state.data.smtpProfiles = result.smtp_profiles || state.data.smtpProfiles;
+    renderProjectSelect();
+    renderDashboard();
+    renderSettingsForm();
+    await refreshSelectedProject();
+    showToast("Project settings updated");
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+}
+
+async function refreshSelectedPathRuns() {
+  if (!state.selectedProject || !state.selectedPathCheckId) {
+    state.data.pathRuns = [];
+    renderPathHealthPanel();
+    return;
+  }
+
+  const projectID = state.selectedProject.id;
+  const checkID = state.selectedPathCheckId;
+  try {
+    const runs = await api(
+      `/v1/projects/${projectID}/checks/${checkID}/runs?limit=180`,
+    );
+    if (
+      !state.selectedProject ||
+      state.selectedProject.id !== projectID ||
+      state.selectedPathCheckId !== checkID
+    ) {
+      return;
+    }
+    state.data.pathRuns = runs || [];
+    renderPathHealthPanel();
+  } catch (err) {
+    setBanner(`Path log refresh error: ${err.message}`);
+  }
 }
 
 async function refreshSelectedProject() {
   if (!state.selectedProject) {
-    setEmptyState();
+    renderDashboard();
+    renderPathHealthPanel();
+    renderUptimePanel();
     return;
   }
 
@@ -486,22 +1061,38 @@ async function refreshSelectedProject() {
     state.pendingRefresh = true;
     return;
   }
-
   state.refreshInFlight = true;
-  const selectedID = state.selectedProject.id;
   setLiveState("syncing");
 
+  const projectID = state.selectedProject.id;
   try {
-    const [checks, logs, incidents, runs, fixes] = await Promise.all([
-      api(`/v1/projects/${selectedID}/checks`),
-      api(`/v1/projects/${selectedID}/logs?limit=200`),
-      api(`/v1/projects/${selectedID}/incidents?limit=80`),
-      api(`/v1/projects/${selectedID}/check-runs?limit=300`),
-      api(`/v1/projects/${selectedID}/fixes`),
-    ]);
+    const [checks, logs, incidents, runs, fixes, uptime, pathHealth] =
+      await Promise.all([
+        api(`/v1/projects/${projectID}/checks`),
+        api(`/v1/projects/${projectID}/logs?limit=220`),
+        api(`/v1/projects/${projectID}/incidents?limit=80`),
+        api(`/v1/projects/${projectID}/check-runs?limit=300`),
+        api(`/v1/projects/${projectID}/fixes`),
+        api(
+          `/v1/projects/${projectID}/uptime?window=${encodeURIComponent(state.activeWindow)}`,
+        ),
+        api(`/v1/projects/${projectID}/paths/health`),
+      ]);
 
-    if (!state.selectedProject || state.selectedProject.id !== selectedID) {
+    if (!state.selectedProject || state.selectedProject.id !== projectID) {
       return;
+    }
+
+    syncSelectedPath(pathHealth || []);
+
+    let pathRuns = [];
+    if (state.selectedPathCheckId) {
+      pathRuns = await api(
+        `/v1/projects/${projectID}/checks/${state.selectedPathCheckId}/runs?limit=180`,
+      );
+      if (!state.selectedProject || state.selectedProject.id !== projectID) {
+        return;
+      }
     }
 
     state.data = {
@@ -510,17 +1101,21 @@ async function refreshSelectedProject() {
       incidents: incidents || [],
       runs: runs || [],
       fixes: fixes || [],
+      uptime: uptime || null,
+      pathHealth: pathHealth || [],
+      pathRuns: pathRuns || [],
+      smtpProfiles: state.data.smtpProfiles || [],
     };
 
-    state.lastUpdated = new Date();
-    el.lastUpdatedText.textContent = `Last updated: ${state.lastUpdated.toLocaleTimeString()}`;
-    showBanner("");
     renderDashboard();
-    renderUptime();
+    renderPathHealthPanel();
+    renderUptimePanel();
+    el.lastUpdatedText.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
     setLiveState("ok");
+    setBanner("");
   } catch (err) {
     setLiveState("error");
-    showBanner(`Live refresh error: ${err.message}`);
+    setBanner(`Live refresh error: ${err.message}`);
   } finally {
     state.refreshInFlight = false;
     if (state.pendingRefresh) {
@@ -530,16 +1125,16 @@ async function refreshSelectedProject() {
   }
 }
 
-async function runNow() {
+async function runChecksNow() {
   if (!state.selectedProject) return;
   try {
     const res = await api(`/v1/projects/${state.selectedProject.id}/run-now`, {
       method: "POST",
     });
-    toast(`Queued ${res.queued} checks`);
-    setTimeout(refreshSelectedProject, 800);
+    showToast(`Queued ${res.queued} checks`);
+    setTimeout(refreshSelectedProject, 700);
   } catch (err) {
-    toast(err.message, "error");
+    showToast(err.message, "error");
   }
 }
 
@@ -552,54 +1147,54 @@ async function toggleAutofix() {
       body: JSON.stringify({ enabled: next }),
     });
     state.selectedProject.autofix_enabled = next;
-    const project = state.projects.find(
+    const inList = state.projects.find(
       (p) => p.id === state.selectedProject.id,
     );
-    if (project) project.autofix_enabled = next;
+    if (inList) inList.autofix_enabled = next;
     renderDashboard();
-    toast(`Autofix ${next ? "enabled" : "disabled"}`);
+    showToast(`Autofix ${next ? "enabled" : "disabled"}`);
   } catch (err) {
-    toast(err.message, "error");
+    showToast(err.message, "error");
   }
 }
 
 async function deleteProject() {
   if (!state.selectedProject) return;
-  const confirmDelete = window.confirm(
-    `Delete project "${state.selectedProject.name}"?`,
-  );
-  if (!confirmDelete) return;
+  const ok = window.confirm(`Delete project "${state.selectedProject.name}"?`);
+  if (!ok) return;
 
   try {
     await api(`/v1/projects/${state.selectedProject.id}`, { method: "DELETE" });
-    toast("Project deleted");
+    showToast("Project deleted");
     await loadProjects();
-    if (!state.selectedProject) {
-      setEmptyState();
-    }
     await refreshSelectedProject();
   } catch (err) {
-    toast(err.message, "error");
+    showToast(err.message, "error");
   }
+}
+
+function normalizeTarget(domain, path) {
+  if (path.startsWith("http://") || path.startsWith("https://")) return path;
+  if (path.startsWith("/")) return `http://${domain}${path}`;
+  return `http://${domain}/${path}`;
 }
 
 async function createProject(event) {
   event.preventDefault();
-
   const name = document.getElementById("createName").value.trim();
   const domain = document.getElementById("createDomain").value.trim();
   const interval = Number(document.getElementById("createInterval").value);
   const threshold = Number(document.getElementById("createThreshold").value);
-  const autofix = document.getElementById("createAutofix").checked;
+  const autofixEnabled = document.getElementById("createAutofix").checked;
   const emails = document
     .getElementById("createEmails")
     .value.split(",")
-    .map((s) => s.trim())
+    .map((v) => v.trim())
     .filter(Boolean);
   const paths = document
     .getElementById("createPaths")
     .value.split("\n")
-    .map((s) => s.trim())
+    .map((v) => v.trim())
     .filter(Boolean);
 
   try {
@@ -610,18 +1205,17 @@ async function createProject(event) {
         domain,
         check_interval_sec: interval,
         failure_threshold: threshold,
-        autofix_enabled: autofix,
+        autofix_enabled: autofixEnabled,
         alert_emails: emails,
       }),
     });
 
     for (const path of paths) {
-      const target = toHTTPPath(domain, path);
       await api(`/v1/projects/${project.id}/checks`, {
         method: "POST",
         body: JSON.stringify({
           type: "http",
-          target,
+          target: normalizeTarget(domain, path),
           timeout_ms: 5000,
           expected_status: 200,
         }),
@@ -637,22 +1231,16 @@ async function createProject(event) {
     await loadProjects();
     await refreshSelectedProject();
     toggleCreatePanel(false);
-    toast("Project created");
+    showToast("Project created");
   } catch (err) {
-    toast(err.message, "error");
+    showToast(err.message, "error");
   }
-}
-
-function toHTTPPath(domain, path) {
-  if (path.startsWith("http://") || path.startsWith("https://")) return path;
-  if (path.startsWith("/")) return `http://${domain}${path}`;
-  return `http://${domain}/${path}`;
 }
 
 async function createFix(event) {
   event.preventDefault();
   if (!state.selectedProject) {
-    toast("Select a project first", "error");
+    showToast("Select a project first", "error");
     return;
   }
 
@@ -673,22 +1261,22 @@ async function createFix(event) {
     document.getElementById("fixType").value = "http";
     document.getElementById("fixTimeout").value = "60";
     await refreshSelectedProject();
-    toast("Fix added");
+    showToast("Fix added");
   } catch (err) {
-    toast(err.message, "error");
+    showToast(err.message, "error");
   }
 }
 
 async function uploadFix(event) {
   event.preventDefault();
   if (!state.selectedProject) {
-    toast("Select a project first", "error");
+    showToast("Select a project first", "error");
     return;
   }
 
   const fileInput = document.getElementById("uploadFixFile");
   if (!fileInput.files || fileInput.files.length === 0) {
-    toast("Select a .sh file", "error");
+    showToast("Select a .sh file", "error");
     return;
   }
 
@@ -711,159 +1299,271 @@ async function uploadFix(event) {
     document.getElementById("uploadFixType").value = "http";
     document.getElementById("uploadFixTimeout").value = "60";
     await refreshSelectedProject();
-    toast("Fix uploaded");
+    showToast("Fix uploaded");
   } catch (err) {
-    toast(err.message, "error");
+    showToast(err.message, "error");
   }
 }
 
-async function runFix(fixId) {
+async function runFix(fixID) {
   if (!state.selectedProject) return;
   try {
-    await api(`/v1/projects/${state.selectedProject.id}/fixes/${fixId}/run`, {
+    await api(`/v1/projects/${state.selectedProject.id}/fixes/${fixID}/run`, {
       method: "POST",
       body: JSON.stringify({ requested_by: "ui" }),
     });
-    toast("Fix queued");
-    setTimeout(refreshSelectedProject, 900);
+    showToast("Fix queued");
+    setTimeout(refreshSelectedProject, 800);
   } catch (err) {
-    toast(err.message, "error");
+    showToast(err.message, "error");
   }
 }
 
-function applyTemplate(index) {
-  const template = templatePatterns[index];
-  if (!template) return;
+function applyTemplate(idx) {
+  const tpl = errorTemplates[idx];
+  if (!tpl) return;
 
-  const target = state.patternTarget;
-  if (target && target instanceof HTMLInputElement) {
-    target.value = template.value;
+  if (state.patternTarget && state.patternTarget instanceof HTMLInputElement) {
+    state.patternTarget.value = tpl.value;
   } else {
-    el.fixPattern.value = template.value;
-    el.uploadFixPattern.value = template.value;
+    el.fixPattern.value = tpl.value;
+    el.uploadFixPattern.value = tpl.value;
   }
-  toast(`Template applied: ${template.label}`);
+  showToast(`Template applied: ${tpl.label}`);
 }
 
 function toggleCreatePanel(show) {
-  if (show) {
-    el.createPanel.classList.remove("hidden");
-  } else {
-    el.createPanel.classList.add("hidden");
-  }
+  if (!el.createPanel) return;
+  el.createPanel.classList.toggle("hidden", !show);
 }
 
-function startPolling() {
-  stopPolling();
-  state.pollTimer = window.setInterval(() => {
-    if (document.hidden || !state.selectedProject) return;
-    refreshSelectedProject();
-  }, 5000);
-}
-
-function stopPolling() {
-  if (state.pollTimer) {
-    clearInterval(state.pollTimer);
-    state.pollTimer = null;
-  }
-}
-
-function bindPatternTargets() {
+function bindPatternInputs() {
   [el.fixPattern, el.uploadFixPattern].forEach((input) => {
+    if (!input) return;
     input.addEventListener("focus", () => {
       state.patternTarget = input;
     });
   });
 }
 
+function startPolling() {
+  stopPolling();
+  state.pollTimer = window.setInterval(() => {
+    if (document.hidden) return;
+    refreshSelectedProject();
+  }, 5000);
+}
+
+function stopPolling() {
+  if (!state.pollTimer) return;
+  clearInterval(state.pollTimer);
+  state.pollTimer = null;
+}
+
 function attachEvents() {
-  el.navBtns.forEach((btn) => {
-    btn.addEventListener("click", () => selectView(btn.dataset.view));
+  (el.navBtns || []).forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const view = btn.dataset.view;
+      selectView(view);
+      if (view === "settingsView") {
+        try {
+          await loadProjectSettings();
+        } catch (err) {
+          showToast(err.message, "error");
+        }
+      }
+    });
   });
 
-  el.projectSelect.addEventListener("change", async () => {
-    const id = Number(el.projectSelect.value);
-    if (!id) return;
-    state.selectedProjectId = id;
-    state.selectedProject = state.projects.find((p) => p.id === id) || null;
-    setControlsEnabled(Boolean(state.selectedProject));
-    await refreshSelectedProject();
-  });
-
-  el.openCreateBtn.addEventListener("click", () => toggleCreatePanel(true));
-  el.closeCreateBtn.addEventListener("click", () => toggleCreatePanel(false));
-  el.createProjectForm.addEventListener("submit", createProject);
-
-  el.refreshBtn.addEventListener("click", async () => {
-    try {
-      await loadProjects();
+  (el.rangeBtns || []).forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const range = btn.dataset.range;
+      setRange(range);
       await refreshSelectedProject();
-      toast("Refreshed");
-    } catch (err) {
-      toast(err.message, "error");
+    });
+  });
+
+  if (el.projectSelect) {
+    el.projectSelect.addEventListener("change", async () => {
+      const id = Number(el.projectSelect.value);
+      if (!id) return;
+      state.selectedProjectId = id;
+      state.selectedProject = state.projects.find((p) => p.id === id) || null;
+      state.selectedPathCheckId = null;
+      state.selectedPathTarget = "";
+      setActionButtons(Boolean(state.selectedProject));
+      if (state.activeView === "settingsView") {
+        await loadProjectSettings();
+      } else {
+        await refreshSelectedProject();
+      }
+    });
+  }
+
+  if (el.openCreateBtn)
+    el.openCreateBtn.addEventListener("click", () => toggleCreatePanel(true));
+  if (el.closeCreateBtn)
+    el.closeCreateBtn.addEventListener("click", () => toggleCreatePanel(false));
+  if (el.createProjectForm)
+    el.createProjectForm.addEventListener("submit", createProject);
+
+  if (el.refreshBtn) {
+    el.refreshBtn.addEventListener("click", async () => {
+      try {
+        await loadProjects();
+        await refreshSelectedProject();
+        showToast("Refreshed");
+      } catch (err) {
+        showToast(err.message, "error");
+      }
+    });
+  }
+
+  if (el.runNowBtn) el.runNowBtn.addEventListener("click", runChecksNow);
+  if (el.toggleAutofixBtn)
+    el.toggleAutofixBtn.addEventListener("click", toggleAutofix);
+  if (el.deleteProjectBtn)
+    el.deleteProjectBtn.addEventListener("click", deleteProject);
+
+  if (el.fixForm) el.fixForm.addEventListener("submit", createFix);
+  if (el.fixUploadForm) el.fixUploadForm.addEventListener("submit", uploadFix);
+
+  if (el.fixesList) {
+    el.fixesList.addEventListener("click", async (event) => {
+      const button = event.target.closest("button[data-run-fix-id]");
+      if (!button) return;
+      await runFix(Number(button.dataset.runFixId));
+    });
+  }
+
+  if (el.pathsHealthList) {
+    el.pathsHealthList.addEventListener("click", async (event) => {
+      const button = event.target.closest("button[data-path-check-id]");
+      if (!button) return;
+      state.selectedPathCheckId = Number(button.dataset.pathCheckId);
+      const selected = (state.data.pathHealth || []).find(
+        (p) => p.check_id === state.selectedPathCheckId,
+      );
+      state.selectedPathTarget = selected?.target || "";
+      await refreshSelectedPathRuns();
+    });
+  }
+
+  if (el.settingsForm) {
+    el.settingsForm.addEventListener("submit", saveSettings);
+  }
+
+  if (el.addSettingsCheckBtn) {
+    el.addSettingsCheckBtn.addEventListener("click", () => {
+      addSettingsCheckRow();
+    });
+  }
+
+  if (el.settingsChecksRows) {
+    el.settingsChecksRows.addEventListener("click", (event) => {
+      const removeBtn = event.target.closest("button[data-remove-check]");
+      if (!removeBtn) return;
+      const row = removeBtn.closest(".settings-check-row");
+      if (row) {
+        row.remove();
+      }
+    });
+  }
+
+  if (el.templateList) {
+    el.templateList.addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-template-index]");
+      if (!button) return;
+      applyTemplate(Number(button.dataset.templateIndex));
+    });
+  }
+
+  if (el.uptimeCanvas) {
+    el.uptimeCanvas.addEventListener("mousemove", (event) => {
+      if (state.activeView !== "uptimeView") return;
+      const idx = pickUptimeHoverIndex(event.clientX);
+      if (idx === null) {
+        if (state.uptimeHoverIndex !== null) {
+          state.uptimeHoverIndex = null;
+          renderUptimeCanvas();
+        }
+        return;
+      }
+      if (state.uptimeHoverIndex !== idx) {
+        state.uptimeHoverIndex = idx;
+        renderUptimeCanvas();
+      }
+    });
+
+    el.uptimeCanvas.addEventListener("click", (event) => {
+      if (state.activeView !== "uptimeView") return;
+      const idx = pickUptimeHoverIndex(event.clientX);
+      if (idx === null) return;
+      state.uptimeHoverIndex = idx;
+      renderUptimeCanvas();
+    });
+
+    el.uptimeCanvas.addEventListener("mouseleave", () => {
+      if (state.uptimeHoverIndex !== null) {
+        state.uptimeHoverIndex = null;
+        renderUptimeCanvas();
+      }
+      hideUptimeTooltip();
+    });
+  }
+
+  window.addEventListener("resize", () => {
+    if (state.activeView === "uptimeView") {
+      scheduleUptimeRender();
     }
-  });
-
-  el.runNowBtn.addEventListener("click", runNow);
-  el.toggleAutofixBtn.addEventListener("click", toggleAutofix);
-  el.deleteProjectBtn.addEventListener("click", deleteProject);
-
-  el.fixForm.addEventListener("submit", createFix);
-  el.fixUploadForm.addEventListener("submit", uploadFix);
-
-  el.fixesList.addEventListener("click", async (event) => {
-    const button = event.target.closest("button[data-run-fix-id]");
-    if (!button) return;
-    await runFix(Number(button.dataset.runFixId));
-  });
-
-  el.uptimeWidget.addEventListener("click", () => selectView("uptimeView"));
-  el.uptimeWidget.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" || e.key === " ") selectView("uptimeView");
-  });
-
-  el.fixTemplateList.addEventListener("click", (event) => {
-    const button = event.target.closest("button[data-template-index]");
-    if (!button) return;
-    applyTemplate(Number(button.dataset.templateIndex));
   });
 
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
-      refreshSelectedProject();
+      if (state.activeView === "settingsView") {
+        loadProjectSettings().catch((err) =>
+          setBanner(`Settings refresh error: ${err.message}`),
+        );
+      } else {
+        refreshSelectedProject();
+      }
     }
   });
 
-  bindPatternTargets();
-}
-
-function escapeHtml(value) {
-  return String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+  bindPatternInputs();
 }
 
 async function boot() {
   renderTemplateButtons();
+  setRange("1h");
+  const initialView = getPersistedView() || "dashboardView";
+  selectView(initialView);
   attachEvents();
 
-  const savedView = (document.cookie.match(/(?:^|; )kraken_view=([^;]*)/) ||
-    [])[1];
-  const validViews = ["dashboardView", "fixesView", "uptimeView"];
-  selectView(validViews.includes(savedView) ? savedView : "dashboardView");
+  if (
+    typeof window !== "undefined" &&
+    "ResizeObserver" in window &&
+    el.uptimeCanvasWrap &&
+    !state.uptimeResizeObserver
+  ) {
+    state.uptimeResizeObserver = new ResizeObserver(() => {
+      if (state.activeView === "uptimeView") {
+        scheduleUptimeRender();
+      }
+    });
+    state.uptimeResizeObserver.observe(el.uptimeCanvasWrap);
+  }
 
   try {
     await loadProjects();
-    if (state.selectedProject) {
-      await refreshSelectedProject();
+    if (state.activeView === "settingsView") {
+      await loadProjectSettings();
     } else {
-      setEmptyState();
+      await refreshSelectedProject();
     }
   } catch (err) {
-    showBanner(`Startup error: ${err.message}`);
+    setBanner(`Startup error: ${err.message}`);
+    setLiveState("error");
   }
 
   startPolling();

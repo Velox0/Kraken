@@ -27,13 +27,15 @@ type Handler struct {
 	store         *db.Store
 	queue         *queue.RedisQueue
 	fixScriptsDir string
+	uiDir         string
 }
 
-func NewHandler(store *db.Store, q *queue.RedisQueue, fixScriptsDir string) *Handler {
+func NewHandler(store *db.Store, q *queue.RedisQueue, fixScriptsDir, uiDir string) *Handler {
 	return &Handler{
 		store:         store,
 		queue:         q,
 		fixScriptsDir: fixScriptsDir,
+		uiDir:         uiDir,
 	}
 }
 
@@ -48,16 +50,22 @@ func (h *Handler) Router() http.Handler {
 		v1.Post("/projects", h.createProject)
 		v1.Delete("/projects/{projectID}", h.deleteProject)
 		v1.Patch("/projects/{projectID}/autofix", h.patchProjectAutofix)
+		v1.Get("/projects/{projectID}/settings", h.getProjectSettings)
+		v1.Put("/projects/{projectID}/settings", h.updateProjectSettings)
 		v1.Get("/projects/{projectID}/checks", h.listProjectChecks)
 		v1.Post("/projects/{projectID}/checks", h.createProjectCheck)
+		v1.Get("/projects/{projectID}/checks/{checkID}/runs", h.listCheckRunsByCheck)
 		v1.Post("/projects/{projectID}/run-now", h.runProjectNow)
 		v1.Get("/projects/{projectID}/logs", h.listProjectLogs)
 		v1.Get("/projects/{projectID}/incidents", h.listProjectIncidents)
 		v1.Get("/projects/{projectID}/check-runs", h.listProjectCheckRuns)
+		v1.Get("/projects/{projectID}/paths/health", h.listPathHealth)
+		v1.Get("/projects/{projectID}/uptime", h.getProjectUptime)
 		v1.Get("/projects/{projectID}/fixes", h.listProjectFixes)
 		v1.Post("/projects/{projectID}/fixes", h.createProjectFix)
 		v1.Post("/projects/{projectID}/fixes/upload", h.uploadProjectFix)
 		v1.Post("/projects/{projectID}/fixes/{fixID}/run", h.runProjectFix)
+		v1.Get("/smtp_profiles", h.listSMTPProfiles)
 		v1.Post("/smtp_profiles", h.createSMTPProfile)
 	})
 
@@ -66,21 +74,45 @@ func (h *Handler) Router() http.Handler {
 }
 
 func (h *Handler) mountWebUI(r chi.Router) {
-	sub, err := fs.Sub(webAssets, "web")
-	if err != nil {
+	uiFS := h.resolveUIFS()
+	if uiFS == nil {
 		return
 	}
-	fileServer := http.FileServer(http.FS(sub))
+	fileServer := http.FileServer(http.FS(uiFS))
 	r.Get("/", func(w http.ResponseWriter, req *http.Request) {
-		http.ServeFileFS(w, req, sub, "index.html")
+		w.Header().Set("Cache-Control", "no-store")
+		http.ServeFileFS(w, req, uiFS, "index.html")
 	})
 	r.Get("/app.js", func(w http.ResponseWriter, req *http.Request) {
-		http.ServeFileFS(w, req, sub, "app.js")
+		w.Header().Set("Cache-Control", "no-store")
+		http.ServeFileFS(w, req, uiFS, "app.js")
 	})
 	r.Get("/styles.css", func(w http.ResponseWriter, req *http.Request) {
-		http.ServeFileFS(w, req, sub, "styles.css")
+		w.Header().Set("Cache-Control", "no-store")
+		http.ServeFileFS(w, req, uiFS, "styles.css")
 	})
 	r.Handle("/web/*", http.StripPrefix("/web/", fileServer))
+}
+
+func (h *Handler) resolveUIFS() fs.FS {
+	candidates := make([]string, 0, 2)
+	if strings.TrimSpace(h.uiDir) != "" {
+		candidates = append(candidates, h.uiDir)
+	}
+	candidates = append(candidates, "internal/api/web")
+
+	for _, dir := range candidates {
+		indexPath := filepath.Join(dir, "index.html")
+		if info, err := os.Stat(indexPath); err == nil && !info.IsDir() {
+			return os.DirFS(dir)
+		}
+	}
+
+	sub, err := fs.Sub(webAssets, "web")
+	if err != nil {
+		return nil
+	}
+	return sub
 }
 
 func (h *Handler) listProjects(w http.ResponseWriter, r *http.Request) {
@@ -146,6 +178,155 @@ func (h *Handler) patchProjectAutofix(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"project_id": projectID, "autofix_enabled": req.Enabled})
+}
+
+type projectSettingsResponse struct {
+	Project      db.Project              `json:"project"`
+	Checks       []db.Check              `json:"checks"`
+	SMTPProfiles []db.SMTPProfileSummary `json:"smtp_profiles"`
+}
+
+type updateProjectSettingsRequest struct {
+	Name             string                  `json:"name"`
+	Domain           string                  `json:"domain"`
+	CheckIntervalSec int                     `json:"check_interval_sec"`
+	FailureThreshold int                     `json:"failure_threshold"`
+	AutofixEnabled   bool                    `json:"autofix_enabled"`
+	SMTPProfileID    *int64                  `json:"smtp_profile_id"`
+	AlertEmails      []string                `json:"alert_emails"`
+	Checks           []db.ReplaceCheckParams `json:"checks"`
+}
+
+func (h *Handler) getProjectSettings(w http.ResponseWriter, r *http.Request) {
+	projectID, err := parseIDParam(r, "projectID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	project, err := h.store.GetProjectByID(r.Context(), projectID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if project == nil {
+		writeError(w, http.StatusNotFound, errors.New("project not found"))
+		return
+	}
+
+	checks, err := h.store.ListChecksByProject(r.Context(), projectID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	profiles, err := h.store.ListSMTPProfiles(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, projectSettingsResponse{
+		Project:      *project,
+		Checks:       checks,
+		SMTPProfiles: profiles,
+	})
+}
+
+func (h *Handler) updateProjectSettings(w http.ResponseWriter, r *http.Request) {
+	projectID, err := parseIDParam(r, "projectID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	var req updateProjectSettingsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	req.Name = strings.TrimSpace(req.Name)
+	req.Domain = strings.TrimSpace(req.Domain)
+	if req.Name == "" || req.Domain == "" {
+		writeError(w, http.StatusBadRequest, errors.New("name and domain are required"))
+		return
+	}
+	if req.CheckIntervalSec <= 0 {
+		writeError(w, http.StatusBadRequest, errors.New("check_interval_sec must be greater than 0"))
+		return
+	}
+	if req.FailureThreshold <= 0 {
+		writeError(w, http.StatusBadRequest, errors.New("failure_threshold must be greater than 0"))
+		return
+	}
+
+	if req.SMTPProfileID != nil {
+		if *req.SMTPProfileID <= 0 {
+			req.SMTPProfileID = nil
+		} else {
+			profile, err := h.store.GetSMTPProfile(r.Context(), *req.SMTPProfileID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err)
+				return
+			}
+			if profile == nil {
+				writeError(w, http.StatusBadRequest, errors.New("smtp_profile_id not found"))
+				return
+			}
+		}
+	}
+
+	checkInputs := req.Checks
+	if checkInputs == nil {
+		existingChecks, err := h.store.ListChecksByProject(r.Context(), projectID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		checkInputs = make([]db.ReplaceCheckParams, 0, len(existingChecks))
+		for _, c := range existingChecks {
+			id := c.ID
+			checkInputs = append(checkInputs, db.ReplaceCheckParams{
+				ID:             &id,
+				Type:           c.Type,
+				Target:         c.Target,
+				TimeoutMs:      c.TimeoutMs,
+				ExpectedStatus: c.ExpectedStatus,
+			})
+		}
+	}
+
+	updatedProject, err := h.store.UpdateProject(r.Context(), projectID, db.UpdateProjectParams{
+		Name:             req.Name,
+		Domain:           req.Domain,
+		CheckIntervalSec: req.CheckIntervalSec,
+		FailureThreshold: req.FailureThreshold,
+		AutofixEnabled:   req.AutofixEnabled,
+		SMTPProfileID:    req.SMTPProfileID,
+		AlertEmails:      normalizeEmails(req.AlertEmails),
+	})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	updatedChecks, err := h.store.ReplaceProjectChecks(r.Context(), projectID, checkInputs)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	profiles, err := h.store.ListSMTPProfiles(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, projectSettingsResponse{
+		Project:      updatedProject,
+		Checks:       updatedChecks,
+		SMTPProfiles: profiles,
+	})
 }
 
 func (h *Handler) listProjectChecks(w http.ResponseWriter, r *http.Request) {
@@ -246,6 +427,100 @@ func (h *Handler) listProjectCheckRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, runs)
+}
+
+func (h *Handler) listCheckRunsByCheck(w http.ResponseWriter, r *http.Request) {
+	projectID, err := parseIDParam(r, "projectID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	checkID, err := parseIDParam(r, "checkID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	runs, err := h.store.ListCheckRunsByCheck(r.Context(), projectID, checkID, parseLimit(r, 120))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, runs)
+}
+
+func (h *Handler) listPathHealth(w http.ResponseWriter, r *http.Request) {
+	projectID, err := parseIDParam(r, "projectID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	paths, err := h.store.ListPathHealthByProject(r.Context(), projectID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, paths)
+}
+
+type uptimeResponse struct {
+	Window      string           `json:"window"`
+	BucketSec   int              `json:"bucket_sec"`
+	Start       time.Time        `json:"start"`
+	End         time.Time        `json:"end"`
+	UptimeRatio float64          `json:"uptime_ratio"`
+	Points      []db.UptimePoint `json:"points"`
+}
+
+func (h *Handler) getProjectUptime(w http.ResponseWriter, r *http.Request) {
+	projectID, err := parseIDParam(r, "projectID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	windowName := strings.TrimSpace(r.URL.Query().Get("window"))
+	if windowName == "" {
+		windowName = "1h"
+	}
+
+	windowDur, bucketDur, err := uptimeWindowConfig(windowName)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	now := time.Now().UTC()
+	end := alignToBucket(now, bucketDur)
+	if !end.After(now) {
+		end = end.Add(bucketDur)
+	}
+	start := end.Add(-windowDur)
+
+	points, err := h.store.GetUptimeSeries(r.Context(), projectID, start, end, bucketDur)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	totalUp := 0
+	totalKnown := 0
+	for _, p := range points {
+		totalUp += p.UpSeconds
+		totalKnown += p.UpSeconds + p.DownSeconds
+	}
+	ratio := 0.0
+	if totalKnown > 0 {
+		ratio = float64(totalUp) / float64(totalKnown)
+	}
+
+	writeJSON(w, http.StatusOK, uptimeResponse{
+		Window:      windowName,
+		BucketSec:   int(bucketDur.Seconds()),
+		Start:       start,
+		End:         end,
+		UptimeRatio: ratio,
+		Points:      points,
+	})
 }
 
 func (h *Handler) listProjectFixes(w http.ResponseWriter, r *http.Request) {
@@ -455,6 +730,15 @@ func (h *Handler) createSMTPProfile(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, profile)
 }
 
+func (h *Handler) listSMTPProfiles(w http.ResponseWriter, r *http.Request) {
+	profiles, err := h.store.ListSMTPProfiles(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, profiles)
+}
+
 var filenameSanitizer = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
 
 func sanitizeFilename(name string) string {
@@ -468,6 +752,45 @@ func sanitizeFilename(name string) string {
 		name = name[:64]
 	}
 	return name
+}
+
+func normalizeEmails(raw []string) []string {
+	if raw == nil {
+		return []string{}
+	}
+	res := make([]string, 0, len(raw))
+	for _, item := range raw {
+		trimmed := strings.TrimSpace(strings.ToLower(item))
+		if trimmed == "" {
+			continue
+		}
+		res = append(res, trimmed)
+	}
+	return res
+}
+
+func uptimeWindowConfig(window string) (time.Duration, time.Duration, error) {
+	switch window {
+	case "1h":
+		return 1 * time.Hour, 1 * time.Minute, nil
+	case "12h":
+		return 12 * time.Hour, 5 * time.Minute, nil
+	case "1d":
+		return 24 * time.Hour, 15 * time.Minute, nil
+	case "7d":
+		return 7 * 24 * time.Hour, 1 * time.Hour, nil
+	case "30d":
+		return 30 * 24 * time.Hour, 6 * time.Hour, nil
+	default:
+		return 0, 0, errors.New("window must be one of: 1h, 12h, 1d, 7d, 30d")
+	}
+}
+
+func alignToBucket(ts time.Time, bucket time.Duration) time.Time {
+	if bucket <= 0 {
+		return ts
+	}
+	return ts.Truncate(bucket)
 }
 
 func parseIDParam(r *http.Request, key string) (int64, error) {

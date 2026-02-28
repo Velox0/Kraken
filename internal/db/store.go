@@ -56,6 +56,16 @@ type CreateProjectParams struct {
 	AlertEmails      []string `json:"alert_emails"`
 }
 
+type UpdateProjectParams struct {
+	Name             string   `json:"name"`
+	Domain           string   `json:"domain"`
+	CheckIntervalSec int      `json:"check_interval_sec"`
+	FailureThreshold int      `json:"failure_threshold"`
+	AutofixEnabled   bool     `json:"autofix_enabled"`
+	SMTPProfileID    *int64   `json:"smtp_profile_id"`
+	AlertEmails      []string `json:"alert_emails"`
+}
+
 func (s *Store) CreateProject(ctx context.Context, p CreateProjectParams) (Project, error) {
 	if p.FailureThreshold <= 0 {
 		p.FailureThreshold = 3
@@ -134,6 +144,99 @@ func (s *Store) ListProjects(ctx context.Context) ([]Project, error) {
 	return projects, rows.Err()
 }
 
+func (s *Store) GetProjectByID(ctx context.Context, projectID int64) (*Project, error) {
+	var project Project
+	var smtpID sql.NullInt64
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, name, domain, check_interval_sec, failure_threshold, autofix_enabled, smtp_profile_id, alert_emails, next_check_at, created_at
+		FROM projects
+		WHERE id=$1
+	`, projectID).Scan(
+		&project.ID,
+		&project.Name,
+		&project.Domain,
+		&project.CheckIntervalSec,
+		&project.FailureThreshold,
+		&project.AutofixEnabled,
+		&smtpID,
+		&project.AlertEmails,
+		&project.NextCheckAt,
+		&project.CreatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if smtpID.Valid {
+		project.SMTPProfileID = &smtpID.Int64
+	}
+	return &project, nil
+}
+
+func (s *Store) UpdateProject(ctx context.Context, projectID int64, p UpdateProjectParams) (Project, error) {
+	if p.CheckIntervalSec <= 0 {
+		return Project{}, errors.New("check interval must be greater than 0")
+	}
+	if p.FailureThreshold <= 0 {
+		return Project{}, errors.New("failure threshold must be greater than 0")
+	}
+	if p.AlertEmails == nil {
+		p.AlertEmails = []string{}
+	}
+
+	var project Project
+	var smtpArg sql.NullInt64
+	if p.SMTPProfileID != nil {
+		smtpArg = sql.NullInt64{Int64: *p.SMTPProfileID, Valid: true}
+	}
+	var smtpID sql.NullInt64
+	err := s.pool.QueryRow(ctx, `
+		UPDATE projects
+		SET
+			name=$2,
+			domain=$3,
+			check_interval_sec=$4,
+			failure_threshold=$5,
+			autofix_enabled=$6,
+			smtp_profile_id=$7,
+			alert_emails=$8
+		WHERE id=$1
+		RETURNING id, name, domain, check_interval_sec, failure_threshold, autofix_enabled, smtp_profile_id, alert_emails, next_check_at, created_at
+	`,
+		projectID,
+		strings.TrimSpace(p.Name),
+		strings.TrimSpace(p.Domain),
+		p.CheckIntervalSec,
+		p.FailureThreshold,
+		p.AutofixEnabled,
+		nullInt64Arg(smtpArg),
+		p.AlertEmails,
+	).Scan(
+		&project.ID,
+		&project.Name,
+		&project.Domain,
+		&project.CheckIntervalSec,
+		&project.FailureThreshold,
+		&project.AutofixEnabled,
+		&smtpID,
+		&project.AlertEmails,
+		&project.NextCheckAt,
+		&project.CreatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Project{}, fmt.Errorf("project %d not found", projectID)
+		}
+		return Project{}, err
+	}
+	if smtpID.Valid {
+		project.SMTPProfileID = &smtpID.Int64
+	}
+	return project, nil
+}
+
 func (s *Store) SetProjectAutofix(ctx context.Context, projectID int64, enabled bool) error {
 	cmd, err := s.pool.Exec(ctx, `UPDATE projects SET autofix_enabled=$2 WHERE id=$1`, projectID, enabled)
 	if err != nil {
@@ -168,6 +271,14 @@ type Check struct {
 
 type CreateCheckParams struct {
 	ProjectID      int64  `json:"project_id"`
+	Type           string `json:"type"`
+	Target         string `json:"target"`
+	TimeoutMs      int    `json:"timeout_ms"`
+	ExpectedStatus *int   `json:"expected_status"`
+}
+
+type ReplaceCheckParams struct {
+	ID             *int64 `json:"id"`
 	Type           string `json:"type"`
 	Target         string `json:"target"`
 	TimeoutMs      int    `json:"timeout_ms"`
@@ -232,6 +343,108 @@ func (s *Store) ListChecksByProject(ctx context.Context, projectID int64) ([]Che
 		checks = append(checks, c)
 	}
 	return checks, rows.Err()
+}
+
+func (s *Store) ReplaceProjectChecks(ctx context.Context, projectID int64, checks []ReplaceCheckParams) ([]Check, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	var projectExists bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM projects WHERE id=$1)`, projectID).Scan(&projectExists); err != nil {
+		return nil, err
+	}
+	if !projectExists {
+		return nil, fmt.Errorf("project %d not found", projectID)
+	}
+
+	existingRows, err := tx.Query(ctx, `SELECT id FROM checks WHERE project_id=$1`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	existingIDs := make(map[int64]struct{})
+	for existingRows.Next() {
+		var id int64
+		if err := existingRows.Scan(&id); err != nil {
+			existingRows.Close()
+			return nil, err
+		}
+		existingIDs[id] = struct{}{}
+	}
+	if err := existingRows.Err(); err != nil {
+		existingRows.Close()
+		return nil, err
+	}
+	existingRows.Close()
+
+	seenInputIDs := make(map[int64]struct{})
+	keepIDs := make([]int64, 0, len(checks))
+	for _, in := range checks {
+		checkType := strings.ToLower(strings.TrimSpace(in.Type))
+		if checkType != "http" && checkType != "tcp" && checkType != "ping" {
+			return nil, fmt.Errorf("unsupported check type: %s", in.Type)
+		}
+		target := strings.TrimSpace(in.Target)
+		if target == "" {
+			return nil, errors.New("check target is required")
+		}
+
+		timeout := in.TimeoutMs
+		if timeout <= 0 {
+			timeout = 5000
+		}
+
+		if in.ID != nil && *in.ID > 0 {
+			checkID := *in.ID
+			if _, dup := seenInputIDs[checkID]; dup {
+				return nil, fmt.Errorf("duplicate check id in request: %d", checkID)
+			}
+			seenInputIDs[checkID] = struct{}{}
+			if _, ok := existingIDs[checkID]; !ok {
+				return nil, fmt.Errorf("check %d does not belong to project %d", checkID, projectID)
+			}
+			cmd, err := tx.Exec(ctx, `
+				UPDATE checks
+				SET type=$3, target=$4, timeout_ms=$5, expected_status=$6
+				WHERE id=$1 AND project_id=$2
+			`, checkID, projectID, checkType, target, timeout, nullIntArg(in.ExpectedStatus))
+			if err != nil {
+				return nil, err
+			}
+			if cmd.RowsAffected() == 0 {
+				return nil, fmt.Errorf("check %d does not belong to project %d", checkID, projectID)
+			}
+			keepIDs = append(keepIDs, checkID)
+			continue
+		}
+
+		var newID int64
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO checks(project_id, type, target, timeout_ms, expected_status)
+			VALUES($1, $2, $3, $4, $5)
+			RETURNING id
+		`, projectID, checkType, target, timeout, nullIntArg(in.ExpectedStatus)).Scan(&newID); err != nil {
+			return nil, err
+		}
+		keepIDs = append(keepIDs, newID)
+	}
+
+	if len(keepIDs) == 0 {
+		if _, err := tx.Exec(ctx, `DELETE FROM checks WHERE project_id=$1`, projectID); err != nil {
+			return nil, err
+		}
+	} else {
+		if _, err := tx.Exec(ctx, `DELETE FROM checks WHERE project_id=$1 AND NOT (id = ANY($2))`, projectID, keepIDs); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return s.ListChecksByProject(ctx, projectID)
 }
 
 type DueProject struct {
@@ -445,6 +658,41 @@ type CheckRun struct {
 	CreatedAt      time.Time `json:"created_at"`
 }
 
+type PathHealth struct {
+	CheckID            int64      `json:"check_id"`
+	Type               string     `json:"type"`
+	Target             string     `json:"target"`
+	TimeoutMs          int        `json:"timeout_ms"`
+	ExpectedStatus     *int       `json:"expected_status,omitempty"`
+	LastStatus         string     `json:"last_status"`
+	LastCheckedAt      *time.Time `json:"last_checked_at,omitempty"`
+	LastResponseTimeMs *int       `json:"last_response_time_ms,omitempty"`
+	LastErrorMessage   *string    `json:"last_error_message,omitempty"`
+	Runs1h             int        `json:"runs_1h"`
+	Healthy1h          int        `json:"healthy_1h"`
+	Failed1h           int        `json:"failed_1h"`
+	SuccessRate1h      float64    `json:"success_rate_1h"`
+}
+
+type UptimePoint struct {
+	Start          time.Time `json:"start"`
+	End            time.Time `json:"end"`
+	UpSeconds      int       `json:"up_seconds"`
+	DownSeconds    int       `json:"down_seconds"`
+	UnknownSeconds int       `json:"unknown_seconds"`
+	UptimeRatio    float64   `json:"uptime_ratio"`
+}
+
+type UptimeState struct {
+	CurrentStatus string    `json:"current_status"`
+	CursorAt      time.Time `json:"cursor_at"`
+}
+
+type uptimeAgg struct {
+	up   int
+	down int
+}
+
 func (s *Store) GetOpenIncident(ctx context.Context, projectID int64) (*Incident, error) {
 	query := `
 		SELECT id, project_id, status, started_at, resolved_at, error_message, last_alert_sent_at
@@ -649,6 +897,465 @@ func (s *Store) ListCheckRunsByProject(ctx context.Context, projectID int64, lim
 	return res, rows.Err()
 }
 
+func (s *Store) ListCheckRunsByCheck(ctx context.Context, projectID, checkID int64, limit int) ([]CheckRun, error) {
+	limit = clampLimit(limit, 120)
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, check_id, project_id, status, response_time_ms, error_message, created_at
+		FROM check_runs
+		WHERE project_id=$1 AND check_id=$2
+		ORDER BY created_at DESC
+		LIMIT $3
+	`, projectID, checkID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	res := make([]CheckRun, 0, limit)
+	for rows.Next() {
+		var item CheckRun
+		var response sql.NullInt32
+		var errMessage sql.NullString
+		if err := rows.Scan(&item.ID, &item.CheckID, &item.ProjectID, &item.Status, &response, &errMessage, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		if response.Valid {
+			v := int(response.Int32)
+			item.ResponseTimeMs = &v
+		}
+		if errMessage.Valid {
+			v := errMessage.String
+			item.ErrorMessage = &v
+		}
+		res = append(res, item)
+	}
+	return res, rows.Err()
+}
+
+func (s *Store) ListPathHealthByProject(ctx context.Context, projectID int64) ([]PathHealth, error) {
+	rows, err := s.pool.Query(ctx, `
+		WITH latest_runs AS (
+			SELECT DISTINCT ON (check_id)
+				check_id,
+				status,
+				response_time_ms,
+				error_message,
+				created_at
+			FROM check_runs
+			WHERE project_id=$1
+			ORDER BY check_id, created_at DESC
+		),
+		hourly_stats AS (
+			SELECT
+				check_id,
+				COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '1 hour')::INT AS runs_1h,
+				COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '1 hour' AND status='healthy')::INT AS healthy_1h,
+				COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '1 hour' AND status='failed')::INT AS failed_1h
+			FROM check_runs
+			WHERE project_id=$1
+			GROUP BY check_id
+		)
+		SELECT
+			c.id,
+			c.type,
+			c.target,
+			c.timeout_ms,
+			c.expected_status,
+			COALESCE(l.status, 'unknown') AS last_status,
+			l.created_at,
+			l.response_time_ms,
+			l.error_message,
+			COALESCE(h.runs_1h, 0),
+			COALESCE(h.healthy_1h, 0),
+			COALESCE(h.failed_1h, 0)
+		FROM checks c
+		LEFT JOIN latest_runs l ON l.check_id = c.id
+		LEFT JOIN hourly_stats h ON h.check_id = c.id
+		WHERE c.project_id=$1
+		ORDER BY c.id ASC
+	`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	res := make([]PathHealth, 0)
+	for rows.Next() {
+		var item PathHealth
+		var expected sql.NullInt32
+		var lastChecked sql.NullTime
+		var responseTime sql.NullInt32
+		var errMessage sql.NullString
+		if err := rows.Scan(
+			&item.CheckID,
+			&item.Type,
+			&item.Target,
+			&item.TimeoutMs,
+			&expected,
+			&item.LastStatus,
+			&lastChecked,
+			&responseTime,
+			&errMessage,
+			&item.Runs1h,
+			&item.Healthy1h,
+			&item.Failed1h,
+		); err != nil {
+			return nil, err
+		}
+		if expected.Valid {
+			v := int(expected.Int32)
+			item.ExpectedStatus = &v
+		}
+		if lastChecked.Valid {
+			v := lastChecked.Time
+			item.LastCheckedAt = &v
+		}
+		if responseTime.Valid {
+			v := int(responseTime.Int32)
+			item.LastResponseTimeMs = &v
+		}
+		if errMessage.Valid {
+			v := errMessage.String
+			item.LastErrorMessage = &v
+		}
+		if item.Runs1h > 0 {
+			item.SuccessRate1h = float64(item.Healthy1h) / float64(item.Runs1h)
+		}
+		res = append(res, item)
+	}
+	return res, rows.Err()
+}
+
+func (s *Store) RecordProjectUptimeStatus(ctx context.Context, projectID int64, status string, at time.Time) error {
+	if status != "up" && status != "down" {
+		return fmt.Errorf("invalid uptime status: %s", status)
+	}
+	if at.IsZero() {
+		at = time.Now()
+	}
+	at = at.UTC()
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	freshnessWindow, err := projectUptimeFreshnessWindow(ctx, tx, projectID)
+	if err != nil {
+		return err
+	}
+
+	var currentStatus string
+	var cursorAt time.Time
+	err = tx.QueryRow(ctx, `
+		SELECT current_status, cursor_at
+		FROM project_uptime_state
+		WHERE project_id=$1
+		FOR UPDATE
+	`, projectID).Scan(&currentStatus, &cursorAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			_, err = tx.Exec(ctx, `
+				INSERT INTO project_uptime_state(project_id, current_status, cursor_at, updated_at)
+				VALUES($1, $2, $3, NOW())
+			`, projectID, status, at)
+			if err != nil {
+				return err
+			}
+			return tx.Commit(ctx)
+		}
+		return err
+	}
+
+	if !at.After(cursorAt) {
+		_, err = tx.Exec(ctx, `
+			UPDATE project_uptime_state
+			SET current_status=$2, updated_at=NOW()
+			WHERE project_id=$1
+		`, projectID, status)
+		if err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	}
+
+	carryEnd := at
+	if at.Sub(cursorAt) > freshnessWindow {
+		carryEnd = cursorAt.Add(freshnessWindow)
+	}
+	if err := accumulateUptimeDurationTx(ctx, tx, projectID, currentStatus, cursorAt, carryEnd); err != nil {
+		return err
+	}
+
+	_, err = tx.Exec(ctx, `
+		UPDATE project_uptime_state
+		SET current_status=$2, cursor_at=$3, updated_at=NOW()
+		WHERE project_id=$1
+	`, projectID, status, at)
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *Store) GetUptimeSeries(ctx context.Context, projectID int64, from, to time.Time, bucketSize time.Duration) ([]UptimePoint, error) {
+	if !to.After(from) {
+		return nil, fmt.Errorf("invalid uptime range")
+	}
+	if bucketSize <= 0 {
+		return nil, fmt.Errorf("invalid bucket size")
+	}
+
+	from = from.UTC()
+	to = to.UTC()
+	interval := fmt.Sprintf("%d seconds", int(bucketSize.Seconds()))
+	freshnessWindow, err := projectUptimeFreshnessWindow(ctx, s.pool, projectID)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT
+			date_bin($3::interval, bucket_start, $2::timestamptz) AS slot_start,
+			COALESCE(SUM(up_seconds), 0)::INT AS up_seconds,
+			COALESCE(SUM(down_seconds), 0)::INT AS down_seconds
+		FROM project_uptime_minutes
+		WHERE project_id=$1
+		  AND bucket_start >= $2
+		  AND bucket_start < $4
+		GROUP BY slot_start
+		ORDER BY slot_start ASC
+	`, projectID, from, interval, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	bySlot := make(map[time.Time]uptimeAgg)
+	for rows.Next() {
+		var slotStart time.Time
+		var upSeconds int
+		var downSeconds int
+		if err := rows.Scan(&slotStart, &upSeconds, &downSeconds); err != nil {
+			return nil, err
+		}
+		bySlot[slotStart.UTC()] = uptimeAgg{up: upSeconds, down: downSeconds}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Add tail from last cursor to now for near-real-time uptime.
+	state, err := s.getUptimeState(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if state != nil {
+		tailStart := state.CursorAt.UTC()
+		if tailStart.Before(from) {
+			tailStart = from
+		}
+		tailEnd := time.Now().UTC()
+		if tailEnd.After(to) {
+			tailEnd = to
+		}
+		maxTailEnd := state.CursorAt.UTC().Add(freshnessWindow)
+		if tailEnd.After(maxTailEnd) {
+			tailEnd = maxTailEnd
+		}
+		if tailEnd.After(tailStart) {
+			addTailToSlots(bySlot, from, bucketSize, state.CurrentStatus, tailStart, tailEnd)
+		}
+	}
+
+	points := make([]UptimePoint, 0)
+	for slot := from; slot.Before(to); slot = slot.Add(bucketSize) {
+		bucketEnd := slot.Add(bucketSize)
+		if bucketEnd.After(to) {
+			bucketEnd = to
+		}
+		durationSec := int(bucketEnd.Sub(slot).Seconds())
+		if durationSec <= 0 {
+			continue
+		}
+
+		val := bySlot[slot]
+		up := val.up
+		down := val.down
+		if up < 0 {
+			up = 0
+		}
+		if down < 0 {
+			down = 0
+		}
+		if up > durationSec {
+			up = durationSec
+		}
+		if down > durationSec {
+			down = durationSec
+		}
+
+		known := up + down
+		if known > durationSec {
+			overflow := known - durationSec
+			if up >= down {
+				up -= overflow
+				if up < 0 {
+					up = 0
+				}
+			} else {
+				down -= overflow
+				if down < 0 {
+					down = 0
+				}
+			}
+			known = up + down
+		}
+		if known > 0 && known < durationSec {
+			missing := durationSec - known
+			if down > up {
+				down += missing
+			} else {
+				up += missing
+			}
+		}
+
+		ratio := 0.0
+		known = up + down
+		if known > 0 {
+			ratio = float64(up) / float64(known)
+		}
+
+		points = append(points, UptimePoint{
+			Start:          slot,
+			End:            bucketEnd,
+			UpSeconds:      up,
+			DownSeconds:    down,
+			UnknownSeconds: 0,
+			UptimeRatio:    ratio,
+		})
+	}
+	return points, nil
+}
+
+func (s *Store) getUptimeState(ctx context.Context, projectID int64) (*UptimeState, error) {
+	var state UptimeState
+	err := s.pool.QueryRow(ctx, `
+		SELECT current_status, cursor_at
+		FROM project_uptime_state
+		WHERE project_id=$1
+	`, projectID).Scan(&state.CurrentStatus, &state.CursorAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &state, nil
+}
+
+func accumulateUptimeDurationTx(ctx context.Context, tx pgx.Tx, projectID int64, status string, start, end time.Time) error {
+	start = start.UTC()
+	end = end.UTC()
+	if !end.After(start) {
+		return nil
+	}
+
+	for cursor := start; cursor.Before(end); {
+		minuteStart := cursor.Truncate(time.Minute)
+		minuteEnd := minuteStart.Add(time.Minute)
+		if minuteEnd.After(end) {
+			minuteEnd = end
+		}
+
+		seconds := int(minuteEnd.Sub(cursor).Seconds())
+		if seconds <= 0 {
+			break
+		}
+
+		up := 0
+		down := 0
+		if status == "up" {
+			up = seconds
+		} else {
+			down = seconds
+		}
+
+		_, err := tx.Exec(ctx, `
+			INSERT INTO project_uptime_minutes(project_id, bucket_start, up_seconds, down_seconds)
+			VALUES($1, $2, $3, $4)
+			ON CONFLICT(project_id, bucket_start)
+			DO UPDATE SET
+				up_seconds = LEAST(60, project_uptime_minutes.up_seconds + EXCLUDED.up_seconds),
+				down_seconds = LEAST(60, project_uptime_minutes.down_seconds + EXCLUDED.down_seconds)
+		`, projectID, minuteStart, up, down)
+		if err != nil {
+			return err
+		}
+		cursor = minuteEnd
+	}
+	return nil
+}
+
+func addTailToSlots(bySlot map[time.Time]uptimeAgg, origin time.Time, bucketSize time.Duration, status string, start, end time.Time) {
+	for cursor := start; cursor.Before(end); {
+		slotStart := alignToSlot(origin, bucketSize, cursor)
+		slotEnd := slotStart.Add(bucketSize)
+		if slotEnd.After(end) {
+			slotEnd = end
+		}
+		seconds := int(slotEnd.Sub(cursor).Seconds())
+		if seconds <= 0 {
+			break
+		}
+
+		entry := bySlot[slotStart]
+		if status == "up" {
+			entry.up += seconds
+		} else {
+			entry.down += seconds
+		}
+		bySlot[slotStart] = entry
+		cursor = slotEnd
+	}
+}
+
+func alignToSlot(origin time.Time, bucketSize time.Duration, ts time.Time) time.Time {
+	if !ts.After(origin) {
+		return origin
+	}
+	delta := ts.Sub(origin)
+	steps := int64(delta / bucketSize)
+	return origin.Add(time.Duration(steps) * bucketSize)
+}
+
+type uptimeRowQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+func projectUptimeFreshnessWindow(ctx context.Context, q uptimeRowQuerier, projectID int64) (time.Duration, error) {
+	var intervalSec int
+	err := q.QueryRow(ctx, `SELECT check_interval_sec FROM projects WHERE id=$1`, projectID).Scan(&intervalSec)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, fmt.Errorf("project %d not found", projectID)
+		}
+		return 0, err
+	}
+	if intervalSec <= 0 {
+		intervalSec = 30
+	}
+	freshnessSec := intervalSec * 4
+	if freshnessSec < 90 {
+		freshnessSec = 90
+	}
+	if freshnessSec > 3600 {
+		freshnessSec = 3600
+	}
+	return time.Duration(freshnessSec) * time.Second, nil
+}
+
 type Fix struct {
 	ID                    int64  `json:"id"`
 	Name                  string `json:"name"`
@@ -777,6 +1484,36 @@ type SMTPProfile struct {
 	Username          string
 	PasswordEncrypted string
 	FromEmail         string
+}
+
+type SMTPProfileSummary struct {
+	ID        int64  `json:"id"`
+	Host      string `json:"host"`
+	Port      int    `json:"port"`
+	Username  string `json:"username"`
+	FromEmail string `json:"from_email"`
+}
+
+func (s *Store) ListSMTPProfiles(ctx context.Context) ([]SMTPProfileSummary, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, host, port, username, from_email
+		FROM smtp_profiles
+		ORDER BY id ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	res := make([]SMTPProfileSummary, 0)
+	for rows.Next() {
+		var item SMTPProfileSummary
+		if err := rows.Scan(&item.ID, &item.Host, &item.Port, &item.Username, &item.FromEmail); err != nil {
+			return nil, err
+		}
+		res = append(res, item)
+	}
+	return res, rows.Err()
 }
 
 func (s *Store) GetSMTPProfile(ctx context.Context, id int64) (*SMTPProfile, error) {

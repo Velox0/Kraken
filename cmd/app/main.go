@@ -69,7 +69,7 @@ func main() {
 	runCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	handler := api.NewHandler(store, q, cfg.FixScriptsDir)
+	handler := api.NewHandler(store, q, cfg.FixScriptsDir, cfg.UIDir)
 	srv := &http.Server{
 		Addr:         cfg.APIAddr,
 		Handler:      handler.Router(),

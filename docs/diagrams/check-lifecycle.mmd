@@ -1,0 +1,66 @@
+sequenceDiagram
+    participant S as ⏱️ Scheduler
+    participant PG as 🐘 PostgreSQL
+    participant R as ⚡ Redis
+    participant W as ⚙️ Worker
+    participant M as 🔍 Monitor
+    participant I as 🚨 Incident
+    participant A as 🔧 Autofix
+    participant N as 📧 Notifier
+    participant Mail as ✉️ SMTP Server
+
+    rect rgb(255, 243, 224)
+        Note over S,R: 1 — Schedule due checks
+        S->>PG: AcquireDueProjects()
+        PG-->>S: due projects
+        S->>PG: ListChecksForProjects()
+        PG-->>S: checks to run
+        S->>R: EnqueueCheck() per check
+    end
+
+    rect rgb(232, 244, 253)
+        Note over W,M: 2 — Execute health check
+        W->>R: DequeueCheck()
+        R-->>W: CheckJob
+        W->>PG: GetCheckContext()
+        PG-->>W: check + project details
+        W->>M: RunCheck(http|tcp|ping)
+        M-->>W: Result (healthy/failed, latency)
+    end
+
+    rect rgb(243, 229, 245)
+        Note over W,I: 3 — Handle result
+        W->>I: HandleCheckResult()
+        I->>PG: InsertCheckRun()
+
+        alt ✅ Healthy
+            I->>PG: SetProjectHealth(0, healthy)
+            I->>PG: GetOpenIncident()
+            opt incident was open
+                I->>PG: ResolveIncident()
+                I->>R: EnqueueEmail(RESOLVED alert)
+            end
+        else ❌ Failed
+            I->>PG: SetProjectHealth(failures + 1)
+            opt failures >= threshold
+                I->>PG: CreateIncident()
+                opt autofix enabled
+                    I->>PG: FindMatchingFix()
+                    I->>A: Execute(bash script)
+                    A-->>I: success / failure
+                end
+                I->>R: EnqueueEmail(DOWN alert)
+            end
+        end
+
+        W->>PG: RecordProjectUptimeStatus()
+    end
+
+    rect rgb(232, 245, 233)
+        Note over N,Mail: 4 — Send alert email
+        N->>R: DequeueEmail()
+        R-->>N: EmailJob
+        N->>PG: GetSMTPProfile()
+        PG-->>N: SMTP credentials
+        N->>Mail: smtp.SendMail()
+    end

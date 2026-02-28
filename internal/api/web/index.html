@@ -25,6 +25,7 @@
             Dashboard
           </button>
           <button class="nav-btn" data-view="fixesView">Fixes</button>
+          <button class="nav-btn" data-view="settingsView">Settings</button>
           <button class="nav-btn" data-view="uptimeView">Uptime</button>
         </nav>
 
@@ -175,6 +176,19 @@
               <p class="uptime-widget-hint">Click for details &rarr;</p>
             </article>
           </div>
+
+          <div class="panel-grid panel-grid-two">
+            <article class="panel-card">
+              <h3>Per Path Health</h3>
+              <div id="pathsHealthList" class="list"></div>
+            </article>
+
+            <article class="panel-card">
+              <h3>Per Path Logs</h3>
+              <p id="pathLogsTitle" class="muted">Select a path to view health logs.</p>
+              <div id="pathLogsList" class="list mono"></div>
+            </article>
+          </div>
         </section>
 
         <section id="fixesView" class="view">
@@ -303,37 +317,101 @@
           </div>
         </section>
 
-        <section id="uptimeView" class="view">
+        <section id="settingsView" class="view">
           <div class="view-header">
             <div>
-              <p class="muted">Uptime Overview</p>
-              <h2>Health Timeline</h2>
+              <p class="muted">Project Configuration</p>
+              <h2>Settings</h2>
             </div>
           </div>
 
-          <div class="metric-grid">
-            <article class="metric-card">
-              <p class="metric-label">Uptime (recent)</p>
-              <p id="uptimeRecent" class="metric-value">0%</p>
-            </article>
-            <article class="metric-card">
-              <p class="metric-label">Uptime (total shown)</p>
-              <p id="uptimeTotal" class="metric-value">0%</p>
-            </article>
-            <article class="metric-card">
-              <p class="metric-label">Healthy Runs</p>
-              <p id="healthyRuns" class="metric-value">0</p>
-            </article>
-            <article class="metric-card">
-              <p class="metric-label">Failed Runs</p>
-              <p id="failedRuns" class="metric-value">0</p>
-            </article>
-          </div>
-
           <article class="panel-card">
-            <h3>Run Timeline</h3>
-            <div id="timeline" class="timeline"></div>
+            <form id="settingsForm" class="form-grid">
+              <label
+                >Name<input id="settingsName" required placeholder="my-project"
+              /></label>
+              <label
+                >Domain<input id="settingsDomain" required placeholder="example.com"
+              /></label>
+              <label
+                >Check Interval (sec)<input
+                  id="settingsInterval"
+                  type="number"
+                  min="5"
+                  required
+              /></label>
+              <label
+                >Failure Threshold<input
+                  id="settingsThreshold"
+                  type="number"
+                  min="1"
+                  required
+              /></label>
+              <label>SMTP Profile
+                <select id="settingsSMTP"></select>
+              </label>
+              <label class="checkbox-row">
+                <input id="settingsAutofix" type="checkbox" /> Enable Autofix
+              </label>
+              <label class="full"
+                >Alert Emails (comma-separated)<input
+                  id="settingsEmails"
+                  placeholder="team@example.com,ops@example.com"
+              /></label>
+              <div class="full settings-checks-head">
+                <h3>Paths / Checks</h3>
+                <button type="button" id="addSettingsCheckBtn" class="btn secondary">
+                  + Add Path
+                </button>
+              </div>
+              <div id="settingsChecksRows" class="full settings-checks-rows"></div>
+              <button class="btn full" type="submit">Save Settings</button>
+            </form>
           </article>
+        </section>
+
+      <section id="uptimeView" class="view">
+        <div class="view-header">
+          <div>
+            <p class="muted">Uptime Overview</p>
+            <h2>Health Timeline</h2>
+          </div>
+          <div class="range-buttons" id="rangeButtons">
+            <button class="btn secondary range-btn active" data-range="1h">1h</button>
+            <button class="btn secondary range-btn" data-range="12h">12h</button>
+            <button class="btn secondary range-btn" data-range="1d">1d</button>
+            <button class="btn secondary range-btn" data-range="7d">7d</button>
+            <button class="btn secondary range-btn" data-range="30d">30d</button>
+          </div>
+        </div>
+
+        <div class="metric-grid">
+          <article class="metric-card">
+            <p class="metric-label">Window Uptime</p>
+            <p id="uptimeRecent" class="metric-value">0%</p>
+          </article>
+          <article class="metric-card">
+            <p class="metric-label">Data Coverage</p>
+            <p id="uptimeTotal" class="metric-value">0%</p>
+          </article>
+          <article class="metric-card">
+            <p class="metric-label">Up Time (sec)</p>
+            <p id="healthyRuns" class="metric-value">0</p>
+          </article>
+          <article class="metric-card">
+            <p class="metric-label">Down Time (sec)</p>
+            <p id="failedRuns" class="metric-value">0</p>
+          </article>
+        </div>
+
+        <article class="panel-card">
+          <h3>Time-Based Uptime Canvas</h3>
+          <div id="uptimeCanvasWrap" class="uptime-canvas-wrap">
+            <canvas id="uptimeCanvas" class="uptime-canvas" width="1200" height="260"></canvas>
+            <div id="uptimeTooltip" class="uptime-tooltip hidden"></div>
+          </div>
+          <p class="muted">Green = up, red = down, blank = no recent data.</p>
+        </article>
 
           <div class="panel-grid panel-grid-two">
             <article class="panel-card">

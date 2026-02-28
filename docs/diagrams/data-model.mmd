@@ -1,0 +1,91 @@
+erDiagram
+    projects ||--o{ checks : "has"
+    projects ||--o{ incidents : "has"
+    projects ||--o{ check_runs : "has"
+    projects ||--o{ project_logs : "has"
+    projects ||--o{ project_fixes : "attached"
+    projects ||--o| project_health : "status"
+    projects }o--o| smtp_profiles : "uses"
+    checks ||--o{ check_runs : "produces"
+    fixes ||--o{ project_fixes : "attached"
+
+    projects {
+        bigint id PK
+        text name
+        text domain
+        int check_interval_sec
+        int failure_threshold
+        bool autofix_enabled
+        bigint smtp_profile_id FK
+        text[] alert_emails
+        timestamp next_check_at
+        timestamp created_at
+    }
+
+    checks {
+        bigint id PK
+        bigint project_id FK
+        text type "http | tcp | ping"
+        text target
+        int timeout_ms
+        int expected_status
+        timestamp created_at
+    }
+
+    check_runs {
+        bigint id PK
+        bigint check_id FK
+        bigint project_id FK
+        text status "healthy | failed"
+        int response_time_ms
+        text error_message
+        timestamp created_at
+    }
+
+    incidents {
+        bigint id PK
+        bigint project_id FK
+        text error_message
+        text status "open | resolved"
+        timestamp last_alert_sent_at
+        timestamp resolved_at
+        timestamp created_at
+    }
+
+    project_health {
+        bigint project_id PK
+        int consecutive_failures
+        text status "healthy | failed"
+    }
+
+    fixes {
+        bigint id PK
+        text name
+        text type
+        text script_path
+        text supported_error_pattern
+        int timeout_sec
+        timestamp created_at
+    }
+
+    project_fixes {
+        bigint project_id FK
+        bigint fix_id FK
+    }
+
+    smtp_profiles {
+        bigint id PK
+        text host
+        int port
+        text username
+        text password_encrypted
+        text from_email
+    }
+
+    project_logs {
+        bigint id PK
+        bigint project_id FK
+        text level "info | warn | error"
+        text message
+        timestamp created_at
+    }

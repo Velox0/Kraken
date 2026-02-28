@@ -1,0 +1,55 @@
+graph TB
+    Browser["🌐 Browser UI"]
+
+    subgraph Process["Kraken Process (cmd/app)"]
+        API["🔌 API Server<br/><i>internal/api</i><br/>chi router · :8080"]
+        Scheduler["⏱️ Scheduler<br/><i>internal/services</i><br/>Tick every 2s"]
+        Worker["⚙️ Worker<br/><i>internal/services</i><br/>Dequeue loop"]
+        Notifier["📧 Notifier<br/><i>internal/services</i><br/>Dequeue loop"]
+    end
+
+    subgraph Core["Core Logic"]
+        Monitor["🔍 Monitor<br/><i>internal/monitor</i><br/>HTTP · TCP · Ping"]
+        Incident["🚨 Incident Service<br/><i>internal/incident</i><br/>Open · Resolve · Alert"]
+        Autofix["🔧 Autofix Engine<br/><i>internal/autofix</i><br/>Sandboxed bash scripts"]
+        SMTP["✉️ SMTP Client<br/><i>internal/notifier</i><br/>smtp.SendMail()"]
+    end
+
+    Postgres[("🐘 PostgreSQL<br/>Projects · Checks · Incidents<br/>Logs · Uptime · Fixes")]
+    Redis[("⚡ Redis<br/>Job Queues<br/>checks · emails · fixes")]
+    Scripts[("📁 scripts/fixes/<br/>.sh fix scripts")]
+
+    Browser -- "HTTP REST" --> API
+
+    API -- "read/write" --> Postgres
+    API -- "EnqueueCheck<br/>(run-now)" --> Redis
+    API -- "EnqueueFix<br/>(manual fix)" --> Redis
+
+    Scheduler -- "AcquireDueProjects<br/>FOR UPDATE SKIP LOCKED" --> Postgres
+    Scheduler -- "EnqueueCheck<br/>(scheduled)" --> Redis
+
+    Worker -- "DequeueCheck<br/>BRPOP" --> Redis
+    Worker -- "DequeueFix<br/>BRPOP" --> Redis
+    Worker --> Monitor
+    Worker --> Incident
+    Worker -- "read/write" --> Postgres
+
+    Incident -- "read/write" --> Postgres
+    Incident -- "EnqueueEmail<br/>(alert)" --> Redis
+    Incident --> Autofix
+
+    Autofix -- "bash exec" --> Scripts
+
+    Notifier -- "DequeueEmail<br/>BRPOP" --> Redis
+    Notifier -- "load profile" --> Postgres
+    Notifier --> SMTP
+
+    classDef infra fill:#e8f4fd,stroke:#2196F3,stroke-width:2px
+    classDef service fill:#fff3e0,stroke:#FF9800,stroke-width:2px
+    classDef core fill:#f3e5f5,stroke:#9C27B0,stroke-width:2px
+    classDef client fill:#e8f5e9,stroke:#4CAF50,stroke-width:2px
+
+    class Browser client
+    class API,Scheduler,Worker,Notifier service
+    class Monitor,Incident,Autofix,SMTP core
+    class Postgres,Redis,Scripts infra

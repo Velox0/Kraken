@@ -31,7 +31,7 @@ func main() {
 		log.Fatalf("redis ping failed: %v", err)
 	}
 
-	handler := api.NewHandler(store, q, cfg.FixScriptsDir)
+	handler := api.NewHandler(store, q, cfg.FixScriptsDir, cfg.UIDir)
 	srv := &http.Server{
 		Addr:         cfg.APIAddr,
 		Handler:      handler.Router(),

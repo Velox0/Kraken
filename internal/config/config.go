@@ -17,6 +17,7 @@ type Config struct {
 	AllowedFixCommands []string
 	AlertCooldownSec   int
 	Environment        string
+	UIDir              string
 }
 
 func Load() Config {
@@ -31,6 +32,7 @@ func Load() Config {
 		AllowedFixCommands: envCSV("ALLOWED_FIX_COMMANDS", []string{"bash"}),
 		AlertCooldownSec:   envInt("ALERT_COOLDOWN_SEC", 300),
 		Environment:        envOrDefault("APP_ENV", "dev"),
+		UIDir:              os.Getenv("UI_DIR"),
 	}
 }
 

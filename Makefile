@@ -8,6 +8,7 @@ down:
 
 migrate:
 	psql "$$DATABASE_URL" -f db/migrations/0001_init.sql
+	psql "$$DATABASE_URL" -f db/migrations/0002_uptime_rollups.sql
 
 api:
 	go run ./cmd/api
