@@ -1493,6 +1493,7 @@ function applyTemplate(idx) {
 function toggleCreatePanel(show) {
   if (!el.createPanel) return;
   el.createPanel.classList.toggle("hidden", !show);
+  if (!show && el.createProjectForm) el.createProjectForm.reset();
 }
 
 function bindPatternInputs() {
@@ -1551,8 +1552,23 @@ function attachEvents() {
     el.openCreateBtn.addEventListener("click", () => toggleCreatePanel(true));
   if (el.closeCreateBtn)
     el.closeCreateBtn.addEventListener("click", () => toggleCreatePanel(false));
+  const createDiscardBtn = document.getElementById("createDiscardBtn");
+  if (createDiscardBtn)
+    createDiscardBtn.addEventListener("click", () => toggleCreatePanel(false));
+  const createSubmitBtn = document.getElementById("createSubmitBtn");
+  if (createSubmitBtn)
+    createSubmitBtn.addEventListener("click", () => {
+      if (el.createProjectForm && el.createProjectForm.reportValidity()) {
+        createProject(new Event("submit", { cancelable: true }));
+      }
+    });
   if (el.createProjectForm)
     el.createProjectForm.addEventListener("submit", createProject);
+  if (el.createPanel) {
+    el.createPanel.addEventListener("click", (e) => {
+      if (e.target === el.createPanel) toggleCreatePanel(false);
+    });
+  }
 
   if (el.refreshBtn) {
     el.refreshBtn.addEventListener("click", async () => {

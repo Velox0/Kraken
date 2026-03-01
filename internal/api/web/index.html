@@ -78,63 +78,80 @@
 
         <div id="globalError" class="banner hidden"></div>
 
-        <section
-          id="createPanel"
-          class="create-panel hidden"
-          aria-label="Create project panel"
-        >
-          <div class="create-header">
-            <h2>Add Project</h2>
-            <button id="closeCreateBtn" class="btn ghost">Close</button>
-          </div>
+        <div id="createPanel" class="modal-overlay hidden">
+          <div class="modal-container">
+            <div class="modal-header">
+              <div>
+                <p class="muted">New Project</p>
+                <h2>Add Project</h2>
+              </div>
+              <button
+                id="closeCreateBtn"
+                class="btn ghost modal-close-btn"
+                aria-label="Close create project"
+              >
+                &times;
+              </button>
+            </div>
 
-          <form id="createProjectForm" class="form-grid">
-            <label
-              >Name<input id="createName" required placeholder="my-project"
-            /></label>
-            <label
-              >Domain<input
-                id="createDomain"
-                required
-                placeholder="example.com"
-            /></label>
-            <label
-              >Check Interval (sec)<input
-                id="createInterval"
-                type="number"
-                min="5"
-                value="30"
-                required
-            /></label>
-            <label
-              >Failure Threshold<input
-                id="createThreshold"
-                type="number"
-                min="1"
-                value="3"
-                required
-            /></label>
-            <label class="checkbox-row">
-              <input id="createAutofix" type="checkbox" checked /> Enable
-              Autofix
-            </label>
-            <label
-              >Alert Emails (comma-separated)<input
-                id="createEmails"
-                placeholder="team@example.com"
-            /></label>
-            <label class="full"
-              >Paths (one per line)
-              <textarea
-                id="createPaths"
-                rows="4"
-                placeholder="/api
+            <div class="modal-body">
+              <form id="createProjectForm" class="form-grid">
+                <label
+                  >Name<input id="createName" required placeholder="my-project"
+                /></label>
+                <label
+                  >Domain<input
+                    id="createDomain"
+                    required
+                    placeholder="example.com"
+                /></label>
+                <label
+                  >Check Interval (sec)<input
+                    id="createInterval"
+                    type="number"
+                    min="5"
+                    value="30"
+                    required
+                /></label>
+                <label
+                  >Failure Threshold<input
+                    id="createThreshold"
+                    type="number"
+                    min="1"
+                    value="3"
+                    required
+                /></label>
+                <label class="checkbox-row">
+                  <input id="createAutofix" type="checkbox" checked /> Enable
+                  Autofix
+                </label>
+                <label
+                  >Alert Emails (comma-separated)<input
+                    id="createEmails"
+                    placeholder="team@example.com"
+                /></label>
+                <label class="full"
+                  >Paths (one per line)
+                  <textarea
+                    id="createPaths"
+                    rows="4"
+                    placeholder="/api
 /test"
-              ></textarea>
-            </label>
-            <button class="btn" type="submit">Create Project + Checks</button>
-          </form>
-        </section>
+                  ></textarea>
+                </label>
+              </form>
+            </div>
+
+            <div class="modal-footer">
+              <button id="createDiscardBtn" class="btn ghost" type="button">
+                Cancel
+              </button>
+              <button id="createSubmitBtn" class="btn" type="button">
+                Create Project + Checks
+              </button>
+            </div>
+          </div>
+        </div>
 
         <section id="dashboardView" class="view active">
           <div class="view-header">

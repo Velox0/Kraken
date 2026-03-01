@@ -2,6 +2,13 @@
 
 Kraken is a project-based uptime monitor with queue-driven checks, incidents, SMTP alerts, and autofix hooks.
 
+> ⚠️ **Warning:** Kraken can run arbitrary shell scripts on your system when checks fail or manually. Use with caution, especially in production environments. Always review and test fix scripts before attaching them to projects. Auth is not implemented directly in Kraken.
+
+<p align="center">
+  <img src="docs/screenshots/screenshot.png" alt="Kraken UI screenshot" width="800" />
+  <p align="center"><em>Kraken's web UI</em>
+</p>
+
 ---
 
 ## Features
@@ -145,32 +152,55 @@ make app
 
 ## Core API
 
-| Method   | Endpoint                                                      | Description               |
-| -------- | ------------------------------------------------------------- | ------------------------- |
-| `GET`    | `/healthz`                                                    | Health check              |
-| `GET`    | `/v1/projects`                                                | List projects             |
-| `POST`   | `/v1/projects`                                                | Create project            |
-| `DELETE` | `/v1/projects/{projectID}`                                    | Delete project            |
-| `PATCH`  | `/v1/projects/{projectID}/autofix`                            | Toggle autofix            |
-| `GET`    | `/v1/projects/{projectID}/settings`                           | Get project settings      |
-| `PUT`    | `/v1/projects/{projectID}/settings`                           | Update project settings   |
-| `GET`    | `/v1/projects/{projectID}/checks`                             | List checks               |
-| `POST`   | `/v1/projects/{projectID}/checks`                             | Create check              |
-| `GET`    | `/v1/projects/{projectID}/checks/{checkID}/runs`              | Per-path check runs       |
-| `POST`   | `/v1/projects/{projectID}/run-now`                            | Trigger immediate check   |
-| `GET`    | `/v1/projects/{projectID}/logs`                               | Project logs              |
-| `GET`    | `/v1/projects/{projectID}/incidents`                          | Project incidents         |
-| `GET`    | `/v1/projects/{projectID}/check-runs`                         | Recent check runs         |
-| `GET`    | `/v1/projects/{projectID}/paths/health`                       | Per-path health summary   |
-| `GET`    | `/v1/projects/{projectID}/uptime?window=1h\|12h\|1d\|7d\|30d` | Time-based uptime buckets |
-| `GET`    | `/v1/projects/{projectID}/fixes`                              | List fixes                |
-| `POST`   | `/v1/projects/{projectID}/fixes`                              | Attach fix                |
-| `PUT`    | `/v1/projects/{projectID}/fixes/{fixID}`                      | Update fix                |
-| `DELETE` | `/v1/projects/{projectID}/fixes/{fixID}`                      | Delete / detach fix       |
-| `POST`   | `/v1/projects/{projectID}/fixes/upload`                       | Upload `.sh` fix script   |
-| `POST`   | `/v1/projects/{projectID}/fixes/{fixID}/run`                  | Run fix manually          |
-| `GET`    | `/v1/smtp_profiles`                                           | List SMTP profiles        |
-| `POST`   | `/v1/smtp_profiles`                                           | Create SMTP profile       |
+### System
+
+| Method | Endpoint   | Description  |
+| ------ | ---------- | ------------ |
+| GET    | `/healthz` | Health check |
+
+### Projects
+
+| Method | Endpoint                   | Description                        |
+| ------ | -------------------------- | ---------------------------------- |
+| GET    | `/v1/projects`             | List projects                      |
+| POST   | `/v1/projects`             | Create project                     |
+| GET    | `/v1/projects/{projectID}` | Get project                        |
+| PATCH  | `/v1/projects/{projectID}` | Update project (settings, autofix) |
+| DELETE | `/v1/projects/{projectID}` | Delete project                     |
+
+### Checks
+
+| Method | Endpoint                          | Description          |
+| ------ | --------------------------------- | -------------------- |
+| GET    | `/v1/projects/{projectID}/checks` | List checks          |
+| POST   | `/v1/projects/{projectID}/checks` | Create check         |
+| GET    | `/v1/checks/{checkID}/runs`       | Get runs for a check |
+
+### Monitoring
+
+| Method | Endpoint                           | Description                |
+| ------ | ---------------------------------- | -------------------------- |
+| GET    | `/v1/projects/{projectID}/metrics` | Uptime, health, aggregates |
+| GET    | `/v1/projects/{projectID}/events`  | Logs and incidents         |
+| POST   | `/v1/projects/{projectID}/run`     | Trigger immediate check    |
+
+### Fixes
+
+| Method | Endpoint                                 | Description             |
+| ------ | ---------------------------------------- | ----------------------- |
+| GET    | `/v1/projects/{projectID}/fixes`         | List fixes              |
+| POST   | `/v1/projects/{projectID}/fixes`         | Create fix              |
+| PATCH  | `/v1/projects/{projectID}/fixes/{fixID}` | Update fix              |
+| DELETE | `/v1/projects/{projectID}/fixes/{fixID}` | Delete fix              |
+| POST   | `/v1/fixes/upload`                       | Upload `.sh` fix script |
+| POST   | `/v1/fixes/{fixID}/run`                  | Run fix manually        |
+
+### SMTP Profiles
+
+| Method | Endpoint            | Description         |
+| ------ | ------------------- | ------------------- |
+| GET    | `/v1/smtp_profiles` | List SMTP profiles  |
+| POST   | `/v1/smtp_profiles` | Create SMTP profile |
 
 ---
 

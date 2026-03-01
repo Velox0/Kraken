@@ -81,7 +81,7 @@ body {
   position: fixed;
   top: 0.6rem;
   left: 0.6rem;
-  z-index: 55;
+  z-index: 90;
   font-size: 1.2rem;
   padding: 0.35rem 0.55rem;
   border: 1px solid rgba(61, 189, 230, 0.4);
