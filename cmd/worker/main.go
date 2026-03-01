@@ -33,7 +33,12 @@ func main() {
 	}
 
 	autofixEngine := autofix.NewEngine(cfg.FixScriptsDir, cfg.AllowedFixCommands)
-	incSvc := incident.NewService(store, q, autofixEngine, time.Duration(cfg.AlertCooldownSec)*time.Second)
+	incSvc := incident.NewService(store, q, autofixEngine, time.Duration(cfg.AlertCooldownSec)*time.Second, incident.EmailConfig{
+		Host: cfg.EmailHost,
+		Port: cfg.EmailPort,
+		User: cfg.EmailUser,
+		Pass: cfg.EmailPass,
+	})
 
 	runner := &services.Worker{
 		Store:         store,

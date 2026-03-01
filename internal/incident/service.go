@@ -3,6 +3,7 @@ package incident
 import (
 	"context"
 	"fmt"
+	"net/smtp"
 	"strings"
 	"time"
 
@@ -12,19 +13,29 @@ import (
 	"kraken/internal/queue"
 )
 
+// EmailConfig holds env-based SMTP credentials for escalation emails.
+type EmailConfig struct {
+	Host string
+	Port int
+	User string
+	Pass string
+}
+
 type Service struct {
 	store         *db.Store
 	queue         *queue.RedisQueue
 	autofixEngine *autofix.Engine
 	alertCooldown time.Duration
+	emailCfg      EmailConfig
 }
 
-func NewService(store *db.Store, q *queue.RedisQueue, fx *autofix.Engine, alertCooldown time.Duration) *Service {
+func NewService(store *db.Store, q *queue.RedisQueue, fx *autofix.Engine, alertCooldown time.Duration, emailCfg EmailConfig) *Service {
 	return &Service{
 		store:         store,
 		queue:         q,
 		autofixEngine: fx,
 		alertCooldown: alertCooldown,
+		emailCfg:      emailCfg,
 	}
 }
 
@@ -86,20 +97,40 @@ func (s *Service) handleFailure(ctx context.Context, check db.CheckContext, resu
 
 	newlyOpened := existing == nil
 	incidentID := int64(0)
+	autofixAttempts := 0
 	if newlyOpened {
 		inc, err := s.store.CreateIncident(ctx, check.ProjectID, result.ErrorMessage)
 		if err != nil {
 			return err
 		}
 		incidentID = inc.ID
+		autofixAttempts = inc.AutofixAttempts
 		_ = s.store.InsertLog(ctx, check.ProjectID, "warn", fmt.Sprintf("incident %d opened", inc.ID))
 	} else {
 		incidentID = existing.ID
+		autofixAttempts = existing.AutofixAttempts
 	}
 
 	autofixStatus := "not_attempted"
-	if newlyOpened && check.AutofixEnabled {
+	maxRetries := check.MaxAutofixRetries
+	if check.AutofixEnabled && maxRetries > 0 {
+		if autofixAttempts < maxRetries {
+			autofixStatus = s.runAutofix(ctx, check, result.ErrorMessage)
+			newCount, err := s.store.IncrementIncidentAutofixAttempts(ctx, incidentID)
+			if err != nil {
+				_ = s.store.InsertLog(ctx, check.ProjectID, "error", "failed to increment autofix attempts: "+err.Error())
+			}
+			if newCount >= maxRetries {
+				_ = s.store.InsertLog(ctx, check.ProjectID, "warn", fmt.Sprintf("autofix retry limit (%d) reached for incident %d", maxRetries, incidentID))
+				s.sendAutofixExceededEmail(ctx, check, incidentID, newCount)
+			}
+		} else {
+			autofixStatus = "limit_exceeded"
+		}
+	} else if check.AutofixEnabled && maxRetries == 0 {
+		// maxRetries == 0 means unlimited retries
 		autofixStatus = s.runAutofix(ctx, check, result.ErrorMessage)
+		_, _ = s.store.IncrementIncidentAutofixAttempts(ctx, incidentID)
 	}
 
 	eventType := "repeated"
@@ -184,5 +215,63 @@ func buildSubject(eventType, domain string) string {
 		return fmt.Sprintf("[RESOLVED] %s recovered", domain)
 	default:
 		return fmt.Sprintf("[DOWN][REPEATED] %s still failing", domain)
+	}
+}
+
+// sendAutofixExceededEmail sends an escalation email using env-based SMTP
+// credentials when autofix retries are exhausted. Falls back to the project's
+// SMTP profile queue path if env creds are not configured.
+func (s *Service) sendAutofixExceededEmail(ctx context.Context, check db.CheckContext, incidentID int64, attempts int) {
+	recipients := check.AlertEmails
+	if len(recipients) == 0 {
+		_ = s.store.InsertLog(ctx, check.ProjectID, "warn", "autofix-exceeded email skipped (no recipients)")
+		return
+	}
+
+	subject := fmt.Sprintf("[AUTOFIX LIMIT] %s – autofix retries exhausted", check.ProjectDomain)
+	body := strings.Join([]string{
+		fmt.Sprintf("Project: %s", check.ProjectName),
+		fmt.Sprintf("Domain: %s", check.ProjectDomain),
+		fmt.Sprintf("Incident ID: %d", incidentID),
+		fmt.Sprintf("Autofix attempts: %d", attempts),
+		fmt.Sprintf("Max retries: %d", check.MaxAutofixRetries),
+		fmt.Sprintf("Timestamp: %s", time.Now().UTC().Format(time.RFC3339)),
+		"",
+		"Automatic fixes have been exhausted. Manual intervention required.",
+	}, "\n")
+
+	// Prefer env-based SMTP if configured
+	if s.emailCfg.User != "" && s.emailCfg.Pass != "" {
+		addr := fmt.Sprintf("%s:%d", s.emailCfg.Host, s.emailCfg.Port)
+		auth := smtp.PlainAuth("", s.emailCfg.User, s.emailCfg.Pass, s.emailCfg.Host)
+
+		msg := strings.Builder{}
+		msg.WriteString("From: " + s.emailCfg.User + "\r\n")
+		msg.WriteString("To: " + strings.Join(recipients, ",") + "\r\n")
+		msg.WriteString("Subject: " + subject + "\r\n")
+		msg.WriteString("MIME-Version: 1.0\r\n")
+		msg.WriteString("Content-Type: text/plain; charset=UTF-8\r\n")
+		msg.WriteString("\r\n")
+		msg.WriteString(body)
+
+		if err := smtp.SendMail(addr, auth, s.emailCfg.User, recipients, []byte(msg.String())); err != nil {
+			_ = s.store.InsertLog(ctx, check.ProjectID, "error", "autofix-exceeded email (env smtp) failed: "+err.Error())
+		} else {
+			_ = s.store.InsertLog(ctx, check.ProjectID, "warn", "autofix-exceeded escalation email sent via env smtp")
+		}
+		return
+	}
+
+	// Fallback: enqueue through project SMTP profile
+	if check.ProjectSMTPID != nil {
+		_ = s.queue.EnqueueEmail(ctx, queue.EmailJob{
+			SMTPProfileID: *check.ProjectSMTPID,
+			To:            recipients,
+			Subject:       subject,
+			Body:          body,
+		})
+		_ = s.store.InsertLog(ctx, check.ProjectID, "warn", "autofix-exceeded escalation email enqueued via project smtp")
+	} else {
+		_ = s.store.InsertLog(ctx, check.ProjectID, "warn", "autofix-exceeded email skipped (no smtp configured)")
 	}
 }

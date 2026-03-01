@@ -97,7 +97,6 @@ const el = {
   rangeBtns: Array.from(document.querySelectorAll(".range-btn")),
   dashboardView: document.getElementById("dashboardView"),
   fixesView: document.getElementById("fixesView"),
-  settingsView: document.getElementById("settingsView"),
   uptimeView: document.getElementById("uptimeView"),
   settingsForm: document.getElementById("settingsForm"),
   settingsName: document.getElementById("settingsName"),
@@ -106,9 +105,30 @@ const el = {
   settingsThreshold: document.getElementById("settingsThreshold"),
   settingsSMTP: document.getElementById("settingsSMTP"),
   settingsAutofix: document.getElementById("settingsAutofix"),
+  settingsMaxRetries: document.getElementById("settingsMaxRetries"),
   settingsEmails: document.getElementById("settingsEmails"),
   settingsChecksRows: document.getElementById("settingsChecksRows"),
   addSettingsCheckBtn: document.getElementById("addSettingsCheckBtn"),
+  settingsModal: document.getElementById("settingsModal"),
+  openSettingsBtn: document.getElementById("openSettingsBtn"),
+  closeSettingsX: document.getElementById("closeSettingsX"),
+  settingsDiscardBtn: document.getElementById("settingsDiscardBtn"),
+  settingsSaveBtn: document.getElementById("settingsSaveBtn"),
+  sidebar: document.getElementById("sidebar"),
+  closeSidebarBtn: document.getElementById("closeSidebarBtn"),
+  openSidebarBtn: document.getElementById("openSidebarBtn"),
+  editFixModal: document.getElementById("editFixModal"),
+  editFixForm: document.getElementById("editFixForm"),
+  editFixId: document.getElementById("editFixId"),
+  editFixName: document.getElementById("editFixName"),
+  editFixType: document.getElementById("editFixType"),
+  editFixScriptPath: document.getElementById("editFixScriptPath"),
+  editFixTimeout: document.getElementById("editFixTimeout"),
+  editFixPattern: document.getElementById("editFixPattern"),
+  closeEditFixX: document.getElementById("closeEditFixX"),
+  editFixDiscardBtn: document.getElementById("editFixDiscardBtn"),
+  editFixSaveBtn: document.getElementById("editFixSaveBtn"),
+  uptimeFixesList: document.getElementById("uptimeFixesList"),
 };
 
 function setCookie(name, value, days) {
@@ -431,6 +451,30 @@ function selectView(viewId) {
   }
 }
 
+function openSettingsModal() {
+  if (el.settingsModal) {
+    el.settingsModal.classList.remove("hidden");
+    loadProjectSettings().catch((err) => showToast(err.message, "error"));
+  }
+}
+
+function closeSettingsModal() {
+  if (el.settingsModal) {
+    el.settingsModal.classList.add("hidden");
+  }
+}
+
+function toggleSidebar(open) {
+  if (!el.sidebar) return;
+  if (open) {
+    el.sidebar.classList.remove("closed");
+    if (el.openSidebarBtn) el.openSidebarBtn.classList.add("hidden");
+  } else {
+    el.sidebar.classList.add("closed");
+    if (el.openSidebarBtn) el.openSidebarBtn.classList.remove("hidden");
+  }
+}
+
 function setRange(range) {
   state.activeWindow = range;
   if (el.rangeBtns) {
@@ -534,6 +578,8 @@ function renderDashboard() {
               <span class="meta">pattern: ${escapeHtml(clampText(f.supported_error_pattern, 120))}</span>
             </div>
             <div class="inline-actions">
+              <button class="btn secondary" data-edit-fix-id="${f.id}">Edit</button>
+              <button class="btn danger" data-delete-fix-id="${f.id}" data-fix-name="${escapeHtml(f.name)}">Delete</button>
               <button class="btn secondary" data-run-fix-id="${f.id}">Run</button>
             </div>
           </div>`,
@@ -597,7 +643,9 @@ function renderUptimeCanvas() {
   }
 
   const step = points.length > 1 ? chartW / (points.length - 1) : chartW;
-  const hasAnyData = points.some((p) => (p.up_seconds || 0) + (p.down_seconds || 0) > 0);
+  const hasAnyData = points.some(
+    (p) => (p.up_seconds || 0) + (p.down_seconds || 0) > 0,
+  );
   if (!hasAnyData) {
     hideUptimeTooltip();
     ctx.fillStyle = "rgba(156,168,214,0.9)";
@@ -688,7 +736,8 @@ function renderUptimeCanvas() {
     const p = hoverDraw.point;
     const known = (p.up_seconds || 0) + (p.down_seconds || 0);
     const status = p.down_seconds > 0 ? "DOWN" : "UP";
-    const pct = known > 0 ? ((100 * (p.up_seconds || 0)) / known).toFixed(2) : "0.00";
+    const pct =
+      known > 0 ? ((100 * (p.up_seconds || 0)) / known).toFixed(2) : "0.00";
     const startLabel = new Date(p.start).toLocaleString();
     const endLabel = new Date(p.end).toLocaleString();
     el.uptimeTooltip.innerHTML = `${status} ${pct}%<br>${startLabel}<br>${endLabel}<br>up ${p.up_seconds || 0}s | down ${p.down_seconds || 0}s`;
@@ -698,7 +747,8 @@ function renderUptimeCanvas() {
     const padYCss = 16;
     const chartWCss = rect.width - padXCss * 2;
     const chartHCss = rect.height - padYCss * 2;
-    const stepCss = points.length > 1 ? chartWCss / (points.length - 1) : chartWCss;
+    const stepCss =
+      points.length > 1 ? chartWCss / (points.length - 1) : chartWCss;
     const xCss = padXCss + hoverDraw.idx * stepCss;
     const yCss = padYCss + (1 - hoverDraw.ratio) * chartHCss;
 
@@ -737,7 +787,12 @@ function renderUptimePanel() {
   uptime.points.forEach((p) => {
     const up = Number(p.up_seconds || 0);
     const down = Number(p.down_seconds || 0);
-    const duration = Math.max(0, Math.round((new Date(p.end).getTime() - new Date(p.start).getTime()) / 1000));
+    const duration = Math.max(
+      0,
+      Math.round(
+        (new Date(p.end).getTime() - new Date(p.start).getTime()) / 1000,
+      ),
+    );
 
     upSeconds += up;
     downSeconds += down;
@@ -793,6 +848,8 @@ function renderUptimePanel() {
     state.uptimeHoverIndex = null;
     hideUptimeTooltip();
   }
+
+  renderUptimeFixesWidget();
 }
 
 function updateProjectInState(project) {
@@ -901,6 +958,9 @@ function renderSettingsForm() {
     state.selectedProject.failure_threshold || 3,
   );
   el.settingsAutofix.checked = Boolean(state.selectedProject.autofix_enabled);
+  el.settingsMaxRetries.value = String(
+    state.selectedProject.max_autofix_retries ?? 3,
+  );
   el.settingsEmails.value = (state.selectedProject.alert_emails || []).join(
     ", ",
   );
@@ -974,7 +1034,7 @@ async function loadProjectSettings() {
 }
 
 async function saveSettings(event) {
-  event.preventDefault();
+  if (event) event.preventDefault();
   if (!state.selectedProject) return;
 
   const checks = collectSettingsChecks();
@@ -991,6 +1051,7 @@ async function saveSettings(event) {
     check_interval_sec: Number(el.settingsInterval.value),
     failure_threshold: Number(el.settingsThreshold.value),
     autofix_enabled: Boolean(el.settingsAutofix.checked),
+    max_autofix_retries: Number(el.settingsMaxRetries.value),
     smtp_profile_id: smtpProfileID && smtpProfileID > 0 ? smtpProfileID : null,
     alert_emails: emails,
     checks,
@@ -1016,6 +1077,7 @@ async function saveSettings(event) {
     renderDashboard();
     renderSettingsForm();
     await refreshSelectedProject();
+    closeSettingsModal();
     showToast("Project settings updated");
   } catch (err) {
     showToast(err.message, "error");
@@ -1319,6 +1381,102 @@ async function runFix(fixID) {
   }
 }
 
+function openEditFixModal(fixID) {
+  const fix = (state.data.fixes || []).find((f) => f.id === fixID);
+  if (!fix) {
+    showToast("Fix not found", "error");
+    return;
+  }
+  el.editFixId.value = String(fix.id);
+  el.editFixName.value = fix.name || "";
+  el.editFixType.value = fix.type || "any";
+  el.editFixScriptPath.value = fix.script_path || "";
+  el.editFixTimeout.value = String(fix.timeout_sec || 60);
+  el.editFixPattern.value = fix.supported_error_pattern || "";
+  if (el.editFixModal) el.editFixModal.classList.remove("hidden");
+}
+
+function closeEditFixModal() {
+  if (el.editFixModal) el.editFixModal.classList.add("hidden");
+}
+
+async function saveEditFix() {
+  if (!state.selectedProject) return;
+  const fixID = Number(el.editFixId.value);
+  if (!fixID) return;
+
+  const payload = {
+    name: el.editFixName.value.trim(),
+    type: el.editFixType.value,
+    script_path: el.editFixScriptPath.value.trim(),
+    timeout_sec: Number(el.editFixTimeout.value),
+    supported_error_pattern: el.editFixPattern.value.trim(),
+  };
+
+  if (
+    !payload.name ||
+    !payload.script_path ||
+    !payload.supported_error_pattern
+  ) {
+    showToast("Name, script path and error pattern are required", "error");
+    return;
+  }
+
+  try {
+    await api(`/v1/projects/${state.selectedProject.id}/fixes/${fixID}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+    closeEditFixModal();
+    showToast("Fix updated");
+    await refreshSelectedProject();
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+}
+
+async function deleteFix(fixID, fixName) {
+  if (!state.selectedProject) return;
+  const ok = window.confirm(
+    `Delete fix "${fixName || fixID}"? This will remove the fix script and detach it from the project.`,
+  );
+  if (!ok) return;
+
+  try {
+    await api(`/v1/projects/${state.selectedProject.id}/fixes/${fixID}`, {
+      method: "DELETE",
+    });
+    showToast("Fix deleted");
+    await refreshSelectedProject();
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+}
+
+function renderUptimeFixesWidget() {
+  if (!el.uptimeFixesList) return;
+  const fixes = state.data.fixes || [];
+  if (!state.selectedProject || fixes.length === 0) {
+    el.uptimeFixesList.innerHTML = `<div class="list-item"><div class="main">No fixes attached</div></div>`;
+    return;
+  }
+  el.uptimeFixesList.innerHTML = fixes
+    .map(
+      (f) => `
+      <div class="list-item">
+        <div class="main">
+          <strong>${escapeHtml(f.name)}</strong>
+          <span class="meta">${escapeHtml(f.type)} | ${escapeHtml(f.script_path)}</span>
+          <span class="meta">pattern: ${escapeHtml(clampText(f.supported_error_pattern, 80))}</span>
+        </div>
+        <div class="inline-actions">
+          <button class="btn secondary" data-run-fix-id="${f.id}">Run</button>
+        </div>
+      </div>`,
+    )
+    .join("");
+}
+
 function applyTemplate(idx) {
   const tpl = errorTemplates[idx];
   if (!tpl) return;
@@ -1338,7 +1496,7 @@ function toggleCreatePanel(show) {
 }
 
 function bindPatternInputs() {
-  [el.fixPattern, el.uploadFixPattern].forEach((input) => {
+  [el.fixPattern, el.uploadFixPattern, el.editFixPattern].forEach((input) => {
     if (!input) return;
     input.addEventListener("focus", () => {
       state.patternTarget = input;
@@ -1365,13 +1523,6 @@ function attachEvents() {
     btn.addEventListener("click", async () => {
       const view = btn.dataset.view;
       selectView(view);
-      if (view === "settingsView") {
-        try {
-          await loadProjectSettings();
-        } catch (err) {
-          showToast(err.message, "error");
-        }
-      }
     });
   });
 
@@ -1392,11 +1543,7 @@ function attachEvents() {
       state.selectedPathCheckId = null;
       state.selectedPathTarget = "";
       setActionButtons(Boolean(state.selectedProject));
-      if (state.activeView === "settingsView") {
-        await loadProjectSettings();
-      } else {
-        await refreshSelectedProject();
-      }
+      await refreshSelectedProject();
     });
   }
 
@@ -1428,11 +1575,77 @@ function attachEvents() {
   if (el.fixForm) el.fixForm.addEventListener("submit", createFix);
   if (el.fixUploadForm) el.fixUploadForm.addEventListener("submit", uploadFix);
 
+  // Settings modal
+  if (el.openSettingsBtn)
+    el.openSettingsBtn.addEventListener("click", openSettingsModal);
+  if (el.closeSettingsX)
+    el.closeSettingsX.addEventListener("click", closeSettingsModal);
+  if (el.settingsDiscardBtn)
+    el.settingsDiscardBtn.addEventListener("click", () => {
+      renderSettingsForm();
+      closeSettingsModal();
+    });
+  if (el.settingsSaveBtn)
+    el.settingsSaveBtn.addEventListener("click", () => saveSettings());
+  if (el.settingsModal) {
+    el.settingsModal.addEventListener("click", (event) => {
+      if (event.target === el.settingsModal) closeSettingsModal();
+    });
+  }
+
+  // Sidebar toggle
+  if (el.closeSidebarBtn)
+    el.closeSidebarBtn.addEventListener("click", () => toggleSidebar(false));
+  if (el.openSidebarBtn)
+    el.openSidebarBtn.addEventListener("click", () => toggleSidebar(true));
+
   if (el.fixesList) {
     el.fixesList.addEventListener("click", async (event) => {
-      const button = event.target.closest("button[data-run-fix-id]");
-      if (!button) return;
-      await runFix(Number(button.dataset.runFixId));
+      const runBtn = event.target.closest("button[data-run-fix-id]");
+      if (runBtn) {
+        await runFix(Number(runBtn.dataset.runFixId));
+        return;
+      }
+      const editBtn = event.target.closest("button[data-edit-fix-id]");
+      if (editBtn) {
+        openEditFixModal(Number(editBtn.dataset.editFixId));
+        return;
+      }
+      const deleteBtn = event.target.closest("button[data-delete-fix-id]");
+      if (deleteBtn) {
+        await deleteFix(
+          Number(deleteBtn.dataset.deleteFixId),
+          deleteBtn.dataset.fixName || "",
+        );
+        return;
+      }
+    });
+  }
+
+  if (el.uptimeFixesList) {
+    el.uptimeFixesList.addEventListener("click", async (event) => {
+      const runBtn = event.target.closest("button[data-run-fix-id]");
+      if (!runBtn) return;
+      await runFix(Number(runBtn.dataset.runFixId));
+    });
+  }
+
+  // Edit fix modal
+  if (el.closeEditFixX)
+    el.closeEditFixX.addEventListener("click", closeEditFixModal);
+  if (el.editFixDiscardBtn)
+    el.editFixDiscardBtn.addEventListener("click", closeEditFixModal);
+  if (el.editFixSaveBtn)
+    el.editFixSaveBtn.addEventListener("click", saveEditFix);
+  if (el.editFixModal) {
+    el.editFixModal.addEventListener("click", (event) => {
+      if (event.target === el.editFixModal) closeEditFixModal();
+    });
+  }
+  if (el.editFixForm) {
+    el.editFixForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      saveEditFix();
     });
   }
 
@@ -1450,7 +1663,10 @@ function attachEvents() {
   }
 
   if (el.settingsForm) {
-    el.settingsForm.addEventListener("submit", saveSettings);
+    el.settingsForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      saveSettings();
+    });
   }
 
   if (el.addSettingsCheckBtn) {
@@ -1520,13 +1736,7 @@ function attachEvents() {
 
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
-      if (state.activeView === "settingsView") {
-        loadProjectSettings().catch((err) =>
-          setBanner(`Settings refresh error: ${err.message}`),
-        );
-      } else {
-        refreshSelectedProject();
-      }
+      refreshSelectedProject();
     }
   });
 
@@ -1537,7 +1747,9 @@ async function boot() {
   renderTemplateButtons();
   setRange("1h");
   const initialView = getPersistedView() || "dashboardView";
-  selectView(initialView);
+  const safeInitialView =
+    initialView === "settingsView" ? "dashboardView" : initialView;
+  selectView(safeInitialView);
   attachEvents();
 
   if (
@@ -1556,11 +1768,7 @@ async function boot() {
 
   try {
     await loadProjects();
-    if (state.activeView === "settingsView") {
-      await loadProjectSettings();
-    } else {
-      await refreshSelectedProject();
-    }
+    await refreshSelectedProject();
   } catch (err) {
     setBanner(`Startup error: ${err.message}`);
     setLiveState("error");

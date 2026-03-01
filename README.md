@@ -2,124 +2,186 @@
 
 Kraken is a project-based uptime monitor with queue-driven checks, incidents, SMTP alerts, and autofix hooks.
 
-## System Architecture
-
-How the components connect — API, Scheduler, Worker, Notifier, and the data stores they share.
-
-![Architecture](docs/diagrams/architecture.svg)
-
-## Check Lifecycle
-
-What happens when a check fires: scheduling → execution → incident handling → alerting.
-
-![Check Lifecycle](docs/diagrams/check-lifecycle.svg)
-
-## Data Model
-
-The PostgreSQL tables and their relationships.
-
-![Data Model](docs/diagrams/data-model.svg)
-
-> Diagram sources live in `docs/diagrams/*.mmd`. Rebuild with:
->
-> ```bash
-> mmdc -i docs/diagrams/architecture.mmd -o docs/diagrams/architecture.svg -b transparent
-> mmdc -i docs/diagrams/check-lifecycle.mmd -o docs/diagrams/check-lifecycle.svg -b transparent
-> mmdc -i docs/diagrams/data-model.mmd -o docs/diagrams/data-model.svg -b transparent
-> ```
-
 ---
 
-## What You Can Run Now
+## Features
 
-- Monitor HTTP/TCP/Ping checks
-- Deduplicate incidents (`1 open incident per project`)
-- Trigger SMTP alerts on open/resolve/repeated failures
-- Configure and run autofix scripts
-- Use a built-in frontend to create projects, view logs/incidents/check runs, and run fixes
+- Monitor HTTP / TCP / Ping checks on any number of projects
+- Deduplicate incidents (1 open incident per project)
+- SMTP alerts on open / resolve / repeated failures
+- Autofix: automatically run fix scripts when incidents open, with a configurable retry limit
+- Escalation email when autofix retries are exhausted (via env-based SMTP or project SMTP profile)
+- Upload `.sh` fix scripts from the UI
+- Edit and delete fix scripts and their error patterns
+- Built-in SPA frontend — create projects, view logs/incidents/check runs, manage fixes, and view time-based uptime charts
 
 ## Runtime Modes
 
-- Single app (recommended): `cmd/app`
-  - Runs API + scheduler + worker + notifier in one process
-- Split mode (optional): `cmd/api`, `cmd/scheduler`, `cmd/worker`, `cmd/notifier`
+| Mode                     | Command                                                         | Description                                        |
+| ------------------------ | --------------------------------------------------------------- | -------------------------------------------------- |
+| Single app (recommended) | `make app`                                                      | API + scheduler + worker + notifier in one process |
+| Split mode               | `make api` / `make scheduler` / `make worker` / `make notifier` | Run each service separately                        |
+
+---
 
 ## Quick Start
 
-1. Start Postgres + Redis:
+### Option A: Automated setup
+
+**macOS / Linux:**
+
+```bash
+./scripts/setup.sh
+```
+
+Asks whether to use **Docker** or **local** PostgreSQL + Redis, copies `.env`, runs migrations and seeds.
+
+**Windows:**
+
+```bat
+scripts\setup.bat
+```
+
+Uses Docker for everything.
+
+### Option B: Manual setup
+
+1. **Start Postgres + Redis:**
 
 ```bash
 docker compose up -d
+# or: make setup-local  (if installed locally)
 ```
 
-2. Configure env:
+2. **Configure env:**
 
 ```bash
 cp .env.example .env
-export $(grep -v '^#' .env | xargs)
+# edit .env with your credentials
+source .env
 ```
 
-3. Run migration:
+3. **Run migrations:**
 
 ```bash
-cat db/migrations/0001_init.sql | docker compose exec -T postgres psql -U postgres -d kraken
-cat db/migrations/0002_uptime_rollups.sql | docker compose exec -T postgres psql -U postgres -d kraken
+make migrate
+# or without psql locally:
+docker exec -i $(docker ps -qf "ancestor=postgres:16") psql -U postgres -d kraken < db/migrations/0001_init.sql
+docker exec -i $(docker ps -qf "ancestor=postgres:16") psql -U postgres -d kraken < db/migrations/0002_uptime_rollups.sql
+docker exec -i $(docker ps -qf "ancestor=postgres:16") psql -U postgres -d kraken < db/migrations/0003_autofix_retries.sql
 ```
 
-4. Start Kraken single app:
+4. **Seed sample data (optional):**
+
+```bash
+make seed
+# or load a single sample project:
+./scripts/load-sample.sh
+./scripts/load-sample.sh --name myapp --domain myapp.local:8080 --checks "/,/api/health"
+```
+
+5. **Start Kraken:**
 
 ```bash
 make app
 ```
 
-5. Open UI:
+6. **Open UI:** [http://localhost:8080/](http://localhost:8080/)
 
-- `http://localhost:8080/`
+---
+
+## Makefile Targets
+
+| Target                | Description                                            |
+| --------------------- | ------------------------------------------------------ |
+| `make up`             | Start Postgres + Redis via Docker Compose              |
+| `make down`           | Stop Docker Compose                                    |
+| `make setup-postgres` | Start local PostgreSQL (macOS: brew, Linux: systemctl) |
+| `make setup-redis`    | Start local Redis (macOS: brew, Linux: systemctl)      |
+| `make setup-local`    | Start both local services                              |
+| `make migrate`        | Apply all database migrations                          |
+| `make seed`           | Run all seed files in `db/seeds/`                      |
+| `make sample`         | Load a sample project via `scripts/load-sample.sh`     |
+| `make app`            | Run the all-in-one app                                 |
+| `make api`            | Run only the API server                                |
+| `make scheduler`      | Run only the scheduler                                 |
+| `make worker`         | Run only the worker                                    |
+| `make notifier`       | Run only the notifier                                  |
+| `make test`           | Run all Go tests                                       |
+
+## Scripts
+
+| Script                   | Description                                           |
+| ------------------------ | ----------------------------------------------------- |
+| `scripts/setup.sh`       | Interactive setup for macOS / Linux (Docker or local) |
+| `scripts/setup.bat`      | Automated setup for Windows (Docker)                  |
+| `scripts/load-sample.sh` | Create a sample project with checks and optional fix  |
+
+`load-sample.sh` flags: `--name`, `--domain`, `--scheme`, `--checks`, `--interval`, `--threshold`, `--autofix`, `--fix-name`, `--fix-script`, `--fix-pattern`, `--fix-timeout`.
+
+---
+
+## Environment Variables
+
+| Variable               | Default                                                              | Description                                                   |
+| ---------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `API_ADDR`             | `:8080`                                                              | HTTP listen address                                           |
+| `DATABASE_URL`         | `postgres://postgres:postgres@localhost:5432/kraken?sslmode=disable` | PostgreSQL connection string                                  |
+| `REDIS_ADDR`           | `localhost:6379`                                                     | Redis address                                                 |
+| `REDIS_PASSWORD`       |                                                                      | Redis password                                                |
+| `REDIS_DB`             | `0`                                                                  | Redis database number                                         |
+| `SCHEDULER_TICK_SEC`   | `2`                                                                  | How often the scheduler looks for due projects                |
+| `FIX_SCRIPTS_DIR`      | `scripts/fixes`                                                      | Directory containing fix shell scripts                        |
+| `ALLOWED_FIX_COMMANDS` | `bash`                                                               | Comma-separated allowlist of commands for fix execution       |
+| `ALERT_COOLDOWN_SEC`   | `300`                                                                | Minimum seconds between repeated alerts for the same incident |
+| `APP_ENV`              | `dev`                                                                | Environment name                                              |
+| `UI_DIR`               |                                                                      | Serve UI from disk instead of embedded FS (for dev)           |
+| `EMAIL_HOST`           | `smtp.gmail.com`                                                     | SMTP host for autofix-exceeded escalation emails              |
+| `EMAIL_PORT`           | `587`                                                                | SMTP port                                                     |
+| `EMAIL_USER`           |                                                                      | SMTP username                                                 |
+| `EMAIL_PASS`           |                                                                      | SMTP password                                                 |
+
+---
 
 ## Core API
 
-- `GET /healthz`
-- `GET /v1/projects`
-- `POST /v1/projects`
-- `DELETE /v1/projects/{projectID}`
-- `PATCH /v1/projects/{projectID}/autofix`
-- `GET /v1/projects/{projectID}/settings`
-- `PUT /v1/projects/{projectID}/settings` (update project + paths/checks + alerts in one request)
-- `GET /v1/projects/{projectID}/checks`
-- `POST /v1/projects/{projectID}/checks`
-- `GET /v1/projects/{projectID}/checks/{checkID}/runs` (per-path logs)
-- `POST /v1/projects/{projectID}/run-now`
-- `GET /v1/projects/{projectID}/logs`
-- `GET /v1/projects/{projectID}/incidents`
-- `GET /v1/projects/{projectID}/check-runs`
-- `GET /v1/projects/{projectID}/paths/health` (per-path health summary)
-- `GET /v1/projects/{projectID}/uptime?window=1h|12h|1d|7d|30d` (time-based uptime buckets)
-- `GET /v1/projects/{projectID}/fixes`
-- `POST /v1/projects/{projectID}/fixes`
-- `POST /v1/projects/{projectID}/fixes/upload` (multipart `.sh` upload)
-- `POST /v1/projects/{projectID}/fixes/{fixID}/run`
-- `GET /v1/smtp_profiles`
-- `POST /v1/smtp_profiles`
+| Method   | Endpoint                                                      | Description               |
+| -------- | ------------------------------------------------------------- | ------------------------- |
+| `GET`    | `/healthz`                                                    | Health check              |
+| `GET`    | `/v1/projects`                                                | List projects             |
+| `POST`   | `/v1/projects`                                                | Create project            |
+| `DELETE` | `/v1/projects/{projectID}`                                    | Delete project            |
+| `PATCH`  | `/v1/projects/{projectID}/autofix`                            | Toggle autofix            |
+| `GET`    | `/v1/projects/{projectID}/settings`                           | Get project settings      |
+| `PUT`    | `/v1/projects/{projectID}/settings`                           | Update project settings   |
+| `GET`    | `/v1/projects/{projectID}/checks`                             | List checks               |
+| `POST`   | `/v1/projects/{projectID}/checks`                             | Create check              |
+| `GET`    | `/v1/projects/{projectID}/checks/{checkID}/runs`              | Per-path check runs       |
+| `POST`   | `/v1/projects/{projectID}/run-now`                            | Trigger immediate check   |
+| `GET`    | `/v1/projects/{projectID}/logs`                               | Project logs              |
+| `GET`    | `/v1/projects/{projectID}/incidents`                          | Project incidents         |
+| `GET`    | `/v1/projects/{projectID}/check-runs`                         | Recent check runs         |
+| `GET`    | `/v1/projects/{projectID}/paths/health`                       | Per-path health summary   |
+| `GET`    | `/v1/projects/{projectID}/uptime?window=1h\|12h\|1d\|7d\|30d` | Time-based uptime buckets |
+| `GET`    | `/v1/projects/{projectID}/fixes`                              | List fixes                |
+| `POST`   | `/v1/projects/{projectID}/fixes`                              | Attach fix                |
+| `PUT`    | `/v1/projects/{projectID}/fixes/{fixID}`                      | Update fix                |
+| `DELETE` | `/v1/projects/{projectID}/fixes/{fixID}`                      | Delete / detach fix       |
+| `POST`   | `/v1/projects/{projectID}/fixes/upload`                       | Upload `.sh` fix script   |
+| `POST`   | `/v1/projects/{projectID}/fixes/{fixID}/run`                  | Run fix manually          |
+| `GET`    | `/v1/smtp_profiles`                                           | List SMTP profiles        |
+| `POST`   | `/v1/smtp_profiles`                                           | Create SMTP profile       |
 
-## Frontend Features
+---
 
-- Create project + path-based checks
-- Trigger run-now checks
-- Toggle autofix
-- Create and attach fixes
-- Upload `.sh` fix scripts from the UI and attach to projects
-- Queue manual fix execution
-- Delete projects from the project detail view
-- View per-path health and per-path logs
-- Edit project settings from UI (emails, paths/checks, intervals, thresholds, SMTP profile, autofix)
-- View logs, incidents, recent check runs, and time-based uptime canvas
+## Autofix
 
-## Autofix Safety Baseline
-
-- Script path constrained to `FIX_SCRIPTS_DIR`
-- Command allowlist via `ALLOWED_FIX_COMMANDS`
+- Scripts are constrained to `FIX_SCRIPTS_DIR`
+- Only commands in `ALLOWED_FIX_COMMANDS` may execute
 - Per-fix execution timeout
-- Full output logged to project logs table
+- Full output logged to the project logs table
+- **Retry limit:** configurable per project via `max_autofix_retries` in settings (0 = unlimited)
+- When retries are exhausted, an **escalation email** is sent via env-based SMTP (or falls back to the project's SMTP profile)
 
 ## Notes
 

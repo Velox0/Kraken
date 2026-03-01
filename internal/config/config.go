@@ -18,6 +18,10 @@ type Config struct {
 	AlertCooldownSec   int
 	Environment        string
 	UIDir              string
+	EmailHost          string
+	EmailPort          int
+	EmailUser          string
+	EmailPass          string
 }
 
 func Load() Config {
@@ -33,6 +37,10 @@ func Load() Config {
 		AlertCooldownSec:   envInt("ALERT_COOLDOWN_SEC", 300),
 		Environment:        envOrDefault("APP_ENV", "dev"),
 		UIDir:              os.Getenv("UI_DIR"),
+		EmailHost:          envOrDefault("EMAIL_HOST", "smtp.gmail.com"),
+		EmailPort:          envInt("EMAIL_PORT", 587),
+		EmailUser:          os.Getenv("EMAIL_USER"),
+		EmailPass:          os.Getenv("EMAIL_PASS"),
 	}
 }
 

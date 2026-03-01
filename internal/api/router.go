@@ -64,6 +64,8 @@ func (h *Handler) Router() http.Handler {
 		v1.Get("/projects/{projectID}/fixes", h.listProjectFixes)
 		v1.Post("/projects/{projectID}/fixes", h.createProjectFix)
 		v1.Post("/projects/{projectID}/fixes/upload", h.uploadProjectFix)
+		v1.Put("/projects/{projectID}/fixes/{fixID}", h.updateProjectFix)
+		v1.Delete("/projects/{projectID}/fixes/{fixID}", h.deleteProjectFix)
 		v1.Post("/projects/{projectID}/fixes/{fixID}/run", h.runProjectFix)
 		v1.Get("/smtp_profiles", h.listSMTPProfiles)
 		v1.Post("/smtp_profiles", h.createSMTPProfile)
@@ -187,14 +189,15 @@ type projectSettingsResponse struct {
 }
 
 type updateProjectSettingsRequest struct {
-	Name             string                  `json:"name"`
-	Domain           string                  `json:"domain"`
-	CheckIntervalSec int                     `json:"check_interval_sec"`
-	FailureThreshold int                     `json:"failure_threshold"`
-	AutofixEnabled   bool                    `json:"autofix_enabled"`
-	SMTPProfileID    *int64                  `json:"smtp_profile_id"`
-	AlertEmails      []string                `json:"alert_emails"`
-	Checks           []db.ReplaceCheckParams `json:"checks"`
+	Name              string                  `json:"name"`
+	Domain            string                  `json:"domain"`
+	CheckIntervalSec  int                     `json:"check_interval_sec"`
+	FailureThreshold  int                     `json:"failure_threshold"`
+	AutofixEnabled    bool                    `json:"autofix_enabled"`
+	MaxAutofixRetries int                     `json:"max_autofix_retries"`
+	SMTPProfileID     *int64                  `json:"smtp_profile_id"`
+	AlertEmails       []string                `json:"alert_emails"`
+	Checks            []db.ReplaceCheckParams `json:"checks"`
 }
 
 func (h *Handler) getProjectSettings(w http.ResponseWriter, r *http.Request) {
@@ -297,13 +300,14 @@ func (h *Handler) updateProjectSettings(w http.ResponseWriter, r *http.Request) 
 	}
 
 	updatedProject, err := h.store.UpdateProject(r.Context(), projectID, db.UpdateProjectParams{
-		Name:             req.Name,
-		Domain:           req.Domain,
-		CheckIntervalSec: req.CheckIntervalSec,
-		FailureThreshold: req.FailureThreshold,
-		AutofixEnabled:   req.AutofixEnabled,
-		SMTPProfileID:    req.SMTPProfileID,
-		AlertEmails:      normalizeEmails(req.AlertEmails),
+		Name:              req.Name,
+		Domain:            req.Domain,
+		CheckIntervalSec:  req.CheckIntervalSec,
+		FailureThreshold:  req.FailureThreshold,
+		AutofixEnabled:    req.AutofixEnabled,
+		MaxAutofixRetries: req.MaxAutofixRetries,
+		SMTPProfileID:     req.SMTPProfileID,
+		AlertEmails:       normalizeEmails(req.AlertEmails),
 	})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -650,6 +654,85 @@ func (h *Handler) uploadProjectFix(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"fix":         fix,
 		"uploaded_as": storedFileName,
+	})
+}
+
+func (h *Handler) updateProjectFix(w http.ResponseWriter, r *http.Request) {
+	projectID, err := parseIDParam(r, "projectID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	fixID, err := parseIDParam(r, "fixID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	existing, err := h.store.GetProjectFix(r.Context(), projectID, fixID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if existing == nil {
+		writeError(w, http.StatusNotFound, errors.New("fix not attached to project"))
+		return
+	}
+
+	var req db.UpdateFixParams
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	if strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.ScriptPath) == "" || strings.TrimSpace(req.SupportedErrorPattern) == "" {
+		writeError(w, http.StatusBadRequest, errors.New("name, script_path and supported_error_pattern are required"))
+		return
+	}
+
+	updated, err := h.store.UpdateFix(r.Context(), fixID, req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, updated)
+}
+
+func (h *Handler) deleteProjectFix(w http.ResponseWriter, r *http.Request) {
+	projectID, err := parseIDParam(r, "projectID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	fixID, err := parseIDParam(r, "fixID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	existing, err := h.store.GetProjectFix(r.Context(), projectID, fixID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if existing == nil {
+		writeError(w, http.StatusNotFound, errors.New("fix not attached to project"))
+		return
+	}
+
+	if err := h.store.DetachFixFromProject(r.Context(), projectID, fixID); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	if err := h.store.DeleteFix(r.Context(), fixID); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"deleted": true,
+		"fix_id":  fixID,
 	})
 }
 

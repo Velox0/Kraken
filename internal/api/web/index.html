@@ -14,10 +14,19 @@
   </head>
   <body>
     <div class="app-shell">
-      <aside class="sidebar">
-        <div class="brand">
-          <p class="brand-kicker">Kraken</p>
-          <h1>Control Plane</h1>
+      <aside id="sidebar" class="sidebar">
+        <div class="sidebar-top-row">
+          <div class="brand">
+            <p class="brand-kicker">Kraken</p>
+            <h1>Control Plane</h1>
+          </div>
+          <button
+            id="closeSidebarBtn"
+            class="btn ghost sidebar-close-btn"
+            aria-label="Close sidebar"
+          >
+            &times;
+          </button>
         </div>
 
         <nav class="side-nav" aria-label="Project views">
@@ -25,7 +34,6 @@
             Dashboard
           </button>
           <button class="nav-btn" data-view="fixesView">Fixes</button>
-          <button class="nav-btn" data-view="settingsView">Settings</button>
           <button class="nav-btn" data-view="uptimeView">Uptime</button>
         </nav>
 
@@ -37,6 +45,14 @@
           <p id="lastUpdatedText" class="muted">Last updated: never</p>
         </div>
       </aside>
+
+      <button
+        id="openSidebarBtn"
+        class="sidebar-open-btn hidden"
+        aria-label="Open sidebar"
+      >
+        &#9776;
+      </button>
 
       <main class="main-area">
         <header class="topbar">
@@ -56,6 +72,7 @@
             <button id="deleteProjectBtn" class="btn danger" disabled>
               Delete
             </button>
+            <button id="openSettingsBtn" class="btn secondary">Settings</button>
           </div>
         </header>
 
@@ -185,7 +202,9 @@
 
             <article class="panel-card">
               <h3>Per Path Logs</h3>
-              <p id="pathLogsTitle" class="muted">Select a path to view health logs.</p>
+              <p id="pathLogsTitle" class="muted">
+                Select a path to view health logs.
+              </p>
               <div id="pathLogsList" class="list mono"></div>
             </article>
           </div>
@@ -317,101 +336,157 @@
           </div>
         </section>
 
-        <section id="settingsView" class="view">
+        <div id="settingsModal" class="modal-overlay hidden">
+          <div class="modal-container">
+            <div class="modal-header">
+              <div>
+                <p class="muted">Project Configuration</p>
+                <h2>Settings</h2>
+              </div>
+              <button
+                id="closeSettingsX"
+                class="btn ghost modal-close-btn"
+                aria-label="Close settings"
+              >
+                &times;
+              </button>
+            </div>
+
+            <div class="modal-body">
+              <form id="settingsForm" class="form-grid">
+                <label
+                  >Name<input
+                    id="settingsName"
+                    required
+                    placeholder="my-project"
+                /></label>
+                <label
+                  >Domain<input
+                    id="settingsDomain"
+                    required
+                    placeholder="example.com"
+                /></label>
+                <label
+                  >Check Interval (sec)<input
+                    id="settingsInterval"
+                    type="number"
+                    min="5"
+                    required
+                /></label>
+                <label
+                  >Failure Threshold<input
+                    id="settingsThreshold"
+                    type="number"
+                    min="1"
+                    required
+                /></label>
+                <label
+                  >SMTP Profile
+                  <select id="settingsSMTP"></select>
+                </label>
+                <label class="checkbox-row">
+                  <input id="settingsAutofix" type="checkbox" /> Enable Autofix
+                </label>
+                <label
+                  >Max Autofix Retries
+                  <input
+                    id="settingsMaxRetries"
+                    type="number"
+                    min="0"
+                    value="3"
+                    placeholder="0 = unlimited"
+                  />
+                </label>
+                <label class="full"
+                  >Alert Emails (comma-separated)<input
+                    id="settingsEmails"
+                    placeholder="team@example.com,ops@example.com"
+                /></label>
+                <div class="full settings-checks-head">
+                  <h3>Paths / Checks</h3>
+                  <button
+                    type="button"
+                    id="addSettingsCheckBtn"
+                    class="btn secondary"
+                  >
+                    + Add Path
+                  </button>
+                </div>
+                <div
+                  id="settingsChecksRows"
+                  class="full settings-checks-rows"
+                ></div>
+              </form>
+            </div>
+
+            <div class="modal-footer">
+              <button id="settingsDiscardBtn" class="btn ghost" type="button">
+                Discard
+              </button>
+              <button id="settingsSaveBtn" class="btn" type="button">
+                Save Settings
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <section id="uptimeView" class="view">
           <div class="view-header">
             <div>
-              <p class="muted">Project Configuration</p>
-              <h2>Settings</h2>
+              <p class="muted">Uptime Overview</p>
+              <h2>Health Timeline</h2>
+            </div>
+            <div class="range-buttons" id="rangeButtons">
+              <button class="btn secondary range-btn active" data-range="1h">
+                1h
+              </button>
+              <button class="btn secondary range-btn" data-range="12h">
+                12h
+              </button>
+              <button class="btn secondary range-btn" data-range="1d">
+                1d
+              </button>
+              <button class="btn secondary range-btn" data-range="7d">
+                7d
+              </button>
+              <button class="btn secondary range-btn" data-range="30d">
+                30d
+              </button>
             </div>
           </div>
 
+          <div class="metric-grid">
+            <article class="metric-card">
+              <p class="metric-label">Window Uptime</p>
+              <p id="uptimeRecent" class="metric-value">0%</p>
+            </article>
+            <article class="metric-card">
+              <p class="metric-label">Data Coverage</p>
+              <p id="uptimeTotal" class="metric-value">0%</p>
+            </article>
+            <article class="metric-card">
+              <p class="metric-label">Up Time (sec)</p>
+              <p id="healthyRuns" class="metric-value">0</p>
+            </article>
+            <article class="metric-card">
+              <p class="metric-label">Down Time (sec)</p>
+              <p id="failedRuns" class="metric-value">0</p>
+            </article>
+          </div>
+
           <article class="panel-card">
-            <form id="settingsForm" class="form-grid">
-              <label
-                >Name<input id="settingsName" required placeholder="my-project"
-              /></label>
-              <label
-                >Domain<input id="settingsDomain" required placeholder="example.com"
-              /></label>
-              <label
-                >Check Interval (sec)<input
-                  id="settingsInterval"
-                  type="number"
-                  min="5"
-                  required
-              /></label>
-              <label
-                >Failure Threshold<input
-                  id="settingsThreshold"
-                  type="number"
-                  min="1"
-                  required
-              /></label>
-              <label>SMTP Profile
-                <select id="settingsSMTP"></select>
-              </label>
-              <label class="checkbox-row">
-                <input id="settingsAutofix" type="checkbox" /> Enable Autofix
-              </label>
-              <label class="full"
-                >Alert Emails (comma-separated)<input
-                  id="settingsEmails"
-                  placeholder="team@example.com,ops@example.com"
-              /></label>
-              <div class="full settings-checks-head">
-                <h3>Paths / Checks</h3>
-                <button type="button" id="addSettingsCheckBtn" class="btn secondary">
-                  + Add Path
-                </button>
-              </div>
-              <div id="settingsChecksRows" class="full settings-checks-rows"></div>
-              <button class="btn full" type="submit">Save Settings</button>
-            </form>
+            <h3>Time-Based Uptime Canvas</h3>
+            <div id="uptimeCanvasWrap" class="uptime-canvas-wrap">
+              <canvas
+                id="uptimeCanvas"
+                class="uptime-canvas"
+                width="1200"
+                height="260"
+              ></canvas>
+              <div id="uptimeTooltip" class="uptime-tooltip hidden"></div>
+            </div>
+            <p class="muted">Green = up, red = down, blank = no recent data.</p>
           </article>
-        </section>
-
-      <section id="uptimeView" class="view">
-        <div class="view-header">
-          <div>
-            <p class="muted">Uptime Overview</p>
-            <h2>Health Timeline</h2>
-          </div>
-          <div class="range-buttons" id="rangeButtons">
-            <button class="btn secondary range-btn active" data-range="1h">1h</button>
-            <button class="btn secondary range-btn" data-range="12h">12h</button>
-            <button class="btn secondary range-btn" data-range="1d">1d</button>
-            <button class="btn secondary range-btn" data-range="7d">7d</button>
-            <button class="btn secondary range-btn" data-range="30d">30d</button>
-          </div>
-        </div>
-
-        <div class="metric-grid">
-          <article class="metric-card">
-            <p class="metric-label">Window Uptime</p>
-            <p id="uptimeRecent" class="metric-value">0%</p>
-          </article>
-          <article class="metric-card">
-            <p class="metric-label">Data Coverage</p>
-            <p id="uptimeTotal" class="metric-value">0%</p>
-          </article>
-          <article class="metric-card">
-            <p class="metric-label">Up Time (sec)</p>
-            <p id="healthyRuns" class="metric-value">0</p>
-          </article>
-          <article class="metric-card">
-            <p class="metric-label">Down Time (sec)</p>
-            <p id="failedRuns" class="metric-value">0</p>
-          </article>
-        </div>
-
-        <article class="panel-card">
-          <h3>Time-Based Uptime Canvas</h3>
-          <div id="uptimeCanvasWrap" class="uptime-canvas-wrap">
-            <canvas id="uptimeCanvas" class="uptime-canvas" width="1200" height="260"></canvas>
-            <div id="uptimeTooltip" class="uptime-tooltip hidden"></div>
-          </div>
-          <p class="muted">Green = up, red = down, blank = no recent data.</p>
-        </article>
 
           <div class="panel-grid panel-grid-two">
             <article class="panel-card">
@@ -424,7 +499,78 @@
               <div id="logsList" class="list mono"></div>
             </article>
           </div>
+
+          <article class="panel-card">
+            <h3>Quick Fixes</h3>
+            <p class="muted">Run an attached fix script directly.</p>
+            <div id="uptimeFixesList" class="list"></div>
+          </article>
         </section>
+
+        <div id="editFixModal" class="modal-overlay hidden">
+          <div class="modal-container modal-sm">
+            <div class="modal-header">
+              <div>
+                <p class="muted">Edit Fix Script</p>
+                <h2>Edit Fix</h2>
+              </div>
+              <button
+                id="closeEditFixX"
+                class="btn ghost modal-close-btn"
+                aria-label="Close edit fix"
+              >
+                &times;
+              </button>
+            </div>
+
+            <div class="modal-body">
+              <form id="editFixForm" class="form-grid compact">
+                <input id="editFixId" type="hidden" />
+                <label
+                  >Name<input id="editFixName" required placeholder="Fix name"
+                /></label>
+                <label
+                  >Type
+                  <select id="editFixType">
+                    <option value="http">http</option>
+                    <option value="tcp">tcp</option>
+                    <option value="ping">ping</option>
+                    <option value="any">any</option>
+                  </select>
+                </label>
+                <label
+                  >Script Path<input
+                    id="editFixScriptPath"
+                    required
+                    placeholder="restart-service.sh"
+                /></label>
+                <label
+                  >Timeout (sec)<input
+                    id="editFixTimeout"
+                    type="number"
+                    min="1"
+                    value="60"
+                    required
+                /></label>
+                <label class="full"
+                  >Error Pattern (regex)<input
+                    id="editFixPattern"
+                    placeholder="connection refused|status code 5[0-9]{2}"
+                    required
+                /></label>
+              </form>
+            </div>
+
+            <div class="modal-footer">
+              <button id="editFixDiscardBtn" class="btn ghost" type="button">
+                Cancel
+              </button>
+              <button id="editFixSaveBtn" class="btn" type="button">
+                Save Fix
+              </button>
+            </div>
+          </div>
+        </div>
       </main>
     </div>
 

@@ -34,41 +34,47 @@ func (s *Store) Close() {
 }
 
 type Project struct {
-	ID               int64     `json:"id"`
-	Name             string    `json:"name"`
-	Domain           string    `json:"domain"`
-	CheckIntervalSec int       `json:"check_interval_sec"`
-	FailureThreshold int       `json:"failure_threshold"`
-	AutofixEnabled   bool      `json:"autofix_enabled"`
-	SMTPProfileID    *int64    `json:"smtp_profile_id,omitempty"`
-	AlertEmails      []string  `json:"alert_emails"`
-	NextCheckAt      time.Time `json:"next_check_at"`
-	CreatedAt        time.Time `json:"created_at"`
+	ID                int64     `json:"id"`
+	Name              string    `json:"name"`
+	Domain            string    `json:"domain"`
+	CheckIntervalSec  int       `json:"check_interval_sec"`
+	FailureThreshold  int       `json:"failure_threshold"`
+	AutofixEnabled    bool      `json:"autofix_enabled"`
+	MaxAutofixRetries int       `json:"max_autofix_retries"`
+	SMTPProfileID     *int64    `json:"smtp_profile_id,omitempty"`
+	AlertEmails       []string  `json:"alert_emails"`
+	NextCheckAt       time.Time `json:"next_check_at"`
+	CreatedAt         time.Time `json:"created_at"`
 }
 
 type CreateProjectParams struct {
-	Name             string   `json:"name"`
-	Domain           string   `json:"domain"`
-	CheckIntervalSec int      `json:"check_interval_sec"`
-	FailureThreshold int      `json:"failure_threshold"`
-	AutofixEnabled   bool     `json:"autofix_enabled"`
-	SMTPProfileID    *int64   `json:"smtp_profile_id"`
-	AlertEmails      []string `json:"alert_emails"`
+	Name              string   `json:"name"`
+	Domain            string   `json:"domain"`
+	CheckIntervalSec  int      `json:"check_interval_sec"`
+	FailureThreshold  int      `json:"failure_threshold"`
+	AutofixEnabled    bool     `json:"autofix_enabled"`
+	MaxAutofixRetries int      `json:"max_autofix_retries"`
+	SMTPProfileID     *int64   `json:"smtp_profile_id"`
+	AlertEmails       []string `json:"alert_emails"`
 }
 
 type UpdateProjectParams struct {
-	Name             string   `json:"name"`
-	Domain           string   `json:"domain"`
-	CheckIntervalSec int      `json:"check_interval_sec"`
-	FailureThreshold int      `json:"failure_threshold"`
-	AutofixEnabled   bool     `json:"autofix_enabled"`
-	SMTPProfileID    *int64   `json:"smtp_profile_id"`
-	AlertEmails      []string `json:"alert_emails"`
+	Name              string   `json:"name"`
+	Domain            string   `json:"domain"`
+	CheckIntervalSec  int      `json:"check_interval_sec"`
+	FailureThreshold  int      `json:"failure_threshold"`
+	AutofixEnabled    bool     `json:"autofix_enabled"`
+	MaxAutofixRetries int      `json:"max_autofix_retries"`
+	SMTPProfileID     *int64   `json:"smtp_profile_id"`
+	AlertEmails       []string `json:"alert_emails"`
 }
 
 func (s *Store) CreateProject(ctx context.Context, p CreateProjectParams) (Project, error) {
 	if p.FailureThreshold <= 0 {
 		p.FailureThreshold = 3
+	}
+	if p.MaxAutofixRetries <= 0 {
+		p.MaxAutofixRetries = 3
 	}
 	if p.AlertEmails == nil {
 		p.AlertEmails = []string{}
@@ -79,9 +85,9 @@ func (s *Store) CreateProject(ctx context.Context, p CreateProjectParams) (Proje
 		smtp = sql.NullInt64{Int64: *p.SMTPProfileID, Valid: true}
 	}
 	query := `
-		INSERT INTO projects (name, domain, check_interval_sec, failure_threshold, autofix_enabled, smtp_profile_id, alert_emails)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING id, name, domain, check_interval_sec, failure_threshold, autofix_enabled, smtp_profile_id, alert_emails, next_check_at, created_at
+		INSERT INTO projects (name, domain, check_interval_sec, failure_threshold, autofix_enabled, max_autofix_retries, smtp_profile_id, alert_emails)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		RETURNING id, name, domain, check_interval_sec, failure_threshold, autofix_enabled, max_autofix_retries, smtp_profile_id, alert_emails, next_check_at, created_at
 	`
 	var smtpID sql.NullInt64
 	err := s.pool.QueryRow(ctx, query,
@@ -90,6 +96,7 @@ func (s *Store) CreateProject(ctx context.Context, p CreateProjectParams) (Proje
 		p.CheckIntervalSec,
 		p.FailureThreshold,
 		p.AutofixEnabled,
+		p.MaxAutofixRetries,
 		nullInt64Arg(smtp),
 		p.AlertEmails,
 	).Scan(
@@ -99,6 +106,7 @@ func (s *Store) CreateProject(ctx context.Context, p CreateProjectParams) (Proje
 		&project.CheckIntervalSec,
 		&project.FailureThreshold,
 		&project.AutofixEnabled,
+		&project.MaxAutofixRetries,
 		&smtpID,
 		&project.AlertEmails,
 		&project.NextCheckAt,
@@ -119,7 +127,7 @@ func (s *Store) CreateProject(ctx context.Context, p CreateProjectParams) (Proje
 
 func (s *Store) ListProjects(ctx context.Context) ([]Project, error) {
 	query := `
-		SELECT id, name, domain, check_interval_sec, failure_threshold, autofix_enabled, smtp_profile_id, alert_emails, next_check_at, created_at
+		SELECT id, name, domain, check_interval_sec, failure_threshold, autofix_enabled, max_autofix_retries, smtp_profile_id, alert_emails, next_check_at, created_at
 		FROM projects
 		ORDER BY id ASC
 	`
@@ -133,7 +141,7 @@ func (s *Store) ListProjects(ctx context.Context) ([]Project, error) {
 	for rows.Next() {
 		var p Project
 		var smtpID sql.NullInt64
-		if err := rows.Scan(&p.ID, &p.Name, &p.Domain, &p.CheckIntervalSec, &p.FailureThreshold, &p.AutofixEnabled, &smtpID, &p.AlertEmails, &p.NextCheckAt, &p.CreatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Domain, &p.CheckIntervalSec, &p.FailureThreshold, &p.AutofixEnabled, &p.MaxAutofixRetries, &smtpID, &p.AlertEmails, &p.NextCheckAt, &p.CreatedAt); err != nil {
 			return nil, err
 		}
 		if smtpID.Valid {
@@ -148,7 +156,7 @@ func (s *Store) GetProjectByID(ctx context.Context, projectID int64) (*Project, 
 	var project Project
 	var smtpID sql.NullInt64
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, name, domain, check_interval_sec, failure_threshold, autofix_enabled, smtp_profile_id, alert_emails, next_check_at, created_at
+		SELECT id, name, domain, check_interval_sec, failure_threshold, autofix_enabled, max_autofix_retries, smtp_profile_id, alert_emails, next_check_at, created_at
 		FROM projects
 		WHERE id=$1
 	`, projectID).Scan(
@@ -158,6 +166,7 @@ func (s *Store) GetProjectByID(ctx context.Context, projectID int64) (*Project, 
 		&project.CheckIntervalSec,
 		&project.FailureThreshold,
 		&project.AutofixEnabled,
+		&project.MaxAutofixRetries,
 		&smtpID,
 		&project.AlertEmails,
 		&project.NextCheckAt,
@@ -182,6 +191,9 @@ func (s *Store) UpdateProject(ctx context.Context, projectID int64, p UpdateProj
 	if p.FailureThreshold <= 0 {
 		return Project{}, errors.New("failure threshold must be greater than 0")
 	}
+	if p.MaxAutofixRetries < 0 {
+		p.MaxAutofixRetries = 3
+	}
 	if p.AlertEmails == nil {
 		p.AlertEmails = []string{}
 	}
@@ -200,10 +212,11 @@ func (s *Store) UpdateProject(ctx context.Context, projectID int64, p UpdateProj
 			check_interval_sec=$4,
 			failure_threshold=$5,
 			autofix_enabled=$6,
-			smtp_profile_id=$7,
-			alert_emails=$8
+			max_autofix_retries=$7,
+			smtp_profile_id=$8,
+			alert_emails=$9
 		WHERE id=$1
-		RETURNING id, name, domain, check_interval_sec, failure_threshold, autofix_enabled, smtp_profile_id, alert_emails, next_check_at, created_at
+		RETURNING id, name, domain, check_interval_sec, failure_threshold, autofix_enabled, max_autofix_retries, smtp_profile_id, alert_emails, next_check_at, created_at
 	`,
 		projectID,
 		strings.TrimSpace(p.Name),
@@ -211,6 +224,7 @@ func (s *Store) UpdateProject(ctx context.Context, projectID int64, p UpdateProj
 		p.CheckIntervalSec,
 		p.FailureThreshold,
 		p.AutofixEnabled,
+		p.MaxAutofixRetries,
 		nullInt64Arg(smtpArg),
 		p.AlertEmails,
 	).Scan(
@@ -220,6 +234,7 @@ func (s *Store) UpdateProject(ctx context.Context, projectID int64, p UpdateProj
 		&project.CheckIntervalSec,
 		&project.FailureThreshold,
 		&project.AutofixEnabled,
+		&project.MaxAutofixRetries,
 		&smtpID,
 		&project.AlertEmails,
 		&project.NextCheckAt,
@@ -538,21 +553,22 @@ func (s *Store) ListChecksForProjects(ctx context.Context, projectIDs []int64) (
 
 type CheckContext struct {
 	Check
-	ProjectName      string
-	ProjectDomain    string
-	FailureThreshold int
-	AutofixEnabled   bool
-	ProjectSMTPID    *int64
-	AlertEmails      []string
-	CheckIntervalSec int
-	ProjectNextCheck time.Time
-	ProjectCreatedAt time.Time
+	ProjectName       string
+	ProjectDomain     string
+	FailureThreshold  int
+	AutofixEnabled    bool
+	MaxAutofixRetries int
+	ProjectSMTPID     *int64
+	AlertEmails       []string
+	CheckIntervalSec  int
+	ProjectNextCheck  time.Time
+	ProjectCreatedAt  time.Time
 }
 
 func (s *Store) GetCheckContext(ctx context.Context, checkID int64) (CheckContext, error) {
 	query := `
 		SELECT c.id, c.project_id, c.type, c.target, c.timeout_ms, c.expected_status, c.created_at,
-		       p.name, p.domain, p.failure_threshold, p.autofix_enabled, p.smtp_profile_id, p.alert_emails,
+		       p.name, p.domain, p.failure_threshold, p.autofix_enabled, p.max_autofix_retries, p.smtp_profile_id, p.alert_emails,
 		       p.check_interval_sec, p.next_check_at, p.created_at
 		FROM checks c
 		JOIN projects p ON p.id = c.project_id
@@ -573,6 +589,7 @@ func (s *Store) GetCheckContext(ctx context.Context, checkID int64) (CheckContex
 		&r.ProjectDomain,
 		&r.FailureThreshold,
 		&r.AutofixEnabled,
+		&r.MaxAutofixRetries,
 		&smtp,
 		&r.AlertEmails,
 		&r.CheckIntervalSec,
@@ -638,6 +655,7 @@ type Incident struct {
 	ResolvedAt      *time.Time `json:"resolved_at,omitempty"`
 	ErrorMessage    string     `json:"error_message"`
 	LastAlertSentAt *time.Time `json:"last_alert_sent_at,omitempty"`
+	AutofixAttempts int        `json:"autofix_attempts"`
 }
 
 type LogEntry struct {
@@ -695,7 +713,7 @@ type uptimeAgg struct {
 
 func (s *Store) GetOpenIncident(ctx context.Context, projectID int64) (*Incident, error) {
 	query := `
-		SELECT id, project_id, status, started_at, resolved_at, error_message, last_alert_sent_at
+		SELECT id, project_id, status, started_at, resolved_at, error_message, last_alert_sent_at, autofix_attempts
 		FROM incidents
 		WHERE project_id=$1 AND status='open'
 		LIMIT 1
@@ -711,6 +729,7 @@ func (s *Store) GetOpenIncident(ctx context.Context, projectID int64) (*Incident
 		&resolved,
 		&inc.ErrorMessage,
 		&lastAlert,
+		&inc.AutofixAttempts,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -734,7 +753,7 @@ func (s *Store) CreateIncident(ctx context.Context, projectID int64, errorMessag
 		INSERT INTO incidents(project_id, status, error_message)
 		VALUES ($1, 'open', $2)
 		ON CONFLICT (project_id) WHERE status='open' DO NOTHING
-		RETURNING id, project_id, status, started_at, resolved_at, error_message, last_alert_sent_at
+		RETURNING id, project_id, status, started_at, resolved_at, error_message, last_alert_sent_at, autofix_attempts
 	`
 	var inc Incident
 	var resolved sql.NullTime
@@ -747,6 +766,7 @@ func (s *Store) CreateIncident(ctx context.Context, projectID int64, errorMessag
 		&resolved,
 		&inc.ErrorMessage,
 		&lastAlert,
+		&inc.AutofixAttempts,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -784,6 +804,19 @@ func (s *Store) ResolveIncident(ctx context.Context, incidentID int64) error {
 func (s *Store) UpdateIncidentAlertTime(ctx context.Context, incidentID int64) error {
 	_, err := s.pool.Exec(ctx, `UPDATE incidents SET last_alert_sent_at=NOW() WHERE id=$1`, incidentID)
 	return err
+}
+
+func (s *Store) IncrementIncidentAutofixAttempts(ctx context.Context, incidentID int64) (int, error) {
+	var attempts int
+	err := s.pool.QueryRow(ctx, `
+		UPDATE incidents SET autofix_attempts = autofix_attempts + 1
+		WHERE id=$1
+		RETURNING autofix_attempts
+	`, incidentID).Scan(&attempts)
+	if err != nil {
+		return 0, err
+	}
+	return attempts, nil
 }
 
 func (s *Store) InsertCheckRun(ctx context.Context, checkID int64, projectID int64, status string, responseTimeMs int, errorMessage string) error {
@@ -1475,6 +1508,74 @@ func (s *Store) AttachFixToProject(ctx context.Context, projectID, fixID int64) 
 		ON CONFLICT DO NOTHING
 	`, projectID, fixID)
 	return err
+}
+
+type UpdateFixParams struct {
+	Name                  string `json:"name"`
+	Type                  string `json:"type"`
+	ScriptPath            string `json:"script_path"`
+	SupportedErrorPattern string `json:"supported_error_pattern"`
+	TimeoutSec            int    `json:"timeout_sec"`
+}
+
+func (s *Store) UpdateFix(ctx context.Context, fixID int64, p UpdateFixParams) (Fix, error) {
+	if strings.TrimSpace(p.Name) == "" {
+		return Fix{}, errors.New("fix name is required")
+	}
+	if strings.TrimSpace(p.ScriptPath) == "" {
+		return Fix{}, errors.New("script_path is required")
+	}
+	if strings.TrimSpace(p.SupportedErrorPattern) == "" {
+		return Fix{}, errors.New("supported_error_pattern is required")
+	}
+	if p.Type == "" {
+		p.Type = "any"
+	}
+	if p.TimeoutSec <= 0 {
+		p.TimeoutSec = 30
+	}
+	var f Fix
+	err := s.pool.QueryRow(ctx, `
+		UPDATE fixes
+		SET name=$2, type=$3, script_path=$4, supported_error_pattern=$5, timeout_sec=$6
+		WHERE id=$1
+		RETURNING id, name, type, script_path, supported_error_pattern, timeout_sec
+	`, fixID,
+		strings.TrimSpace(p.Name),
+		strings.TrimSpace(p.Type),
+		strings.TrimSpace(p.ScriptPath),
+		strings.TrimSpace(p.SupportedErrorPattern),
+		p.TimeoutSec,
+	).Scan(&f.ID, &f.Name, &f.Type, &f.ScriptPath, &f.SupportedErrorPattern, &f.TimeoutSec)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Fix{}, fmt.Errorf("fix %d not found", fixID)
+		}
+		return Fix{}, err
+	}
+	return f, nil
+}
+
+func (s *Store) DeleteFix(ctx context.Context, fixID int64) error {
+	cmd, err := s.pool.Exec(ctx, `DELETE FROM fixes WHERE id=$1`, fixID)
+	if err != nil {
+		return err
+	}
+	if cmd.RowsAffected() == 0 {
+		return fmt.Errorf("fix %d not found", fixID)
+	}
+	return nil
+}
+
+func (s *Store) DetachFixFromProject(ctx context.Context, projectID, fixID int64) error {
+	cmd, err := s.pool.Exec(ctx, `DELETE FROM project_fixes WHERE project_id=$1 AND fix_id=$2`, projectID, fixID)
+	if err != nil {
+		return err
+	}
+	if cmd.RowsAffected() == 0 {
+		return fmt.Errorf("fix %d not attached to project %d", fixID, projectID)
+	}
+	return nil
 }
 
 type SMTPProfile struct {
