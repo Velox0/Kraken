@@ -1451,7 +1451,7 @@ async function uploadFix(event) {
 
   const fileInput = document.getElementById("uploadFixFile");
   if (!fileInput.files || fileInput.files.length === 0) {
-    showToast("Select a .sh file", "error");
+    showToast("Select a .sh, .bat, or .cmd file", "error");
     return;
   }
 

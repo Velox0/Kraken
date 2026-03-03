@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -24,7 +25,11 @@ type Engine struct {
 func NewEngine(scriptsDir string, allowedCommands []string) *Engine {
 	lookup := make(map[string]struct{}, len(allowedCommands))
 	for _, cmd := range allowedCommands {
-		lookup[strings.TrimSpace(cmd)] = struct{}{}
+		normalized := normalizeAllowedCommand(cmd)
+		if normalized == "" {
+			continue
+		}
+		lookup[normalized] = struct{}{}
 	}
 	return &Engine{
 		scriptsDir:       scriptsDir,
@@ -38,10 +43,6 @@ type Result struct {
 }
 
 func (e *Engine) Execute(ctx context.Context, fix FixDefinition) (Result, error) {
-	if _, ok := e.allowedCmdLookup["bash"]; !ok {
-		return Result{}, fmt.Errorf("bash command is not in allowlist")
-	}
-
 	timeoutSec := fix.TimeoutSec
 	if timeoutSec <= 0 {
 		timeoutSec = 30
@@ -54,7 +55,17 @@ func (e *Engine) Execute(ctx context.Context, fix FixDefinition) (Result, error)
 		return Result{}, err
 	}
 
-	cmd := exec.CommandContext(fixCtx, "bash", resolvedPath)
+	runner, err := resolveRunner(runtime.GOOS, resolvedPath)
+	if err != nil {
+		return Result{}, err
+	}
+	if _, ok := e.allowedCmdLookup[runner.allowlistKey]; !ok {
+		return Result{}, fmt.Errorf("%s command is not in allowlist", runner.allowlistKey)
+	}
+
+	args := append([]string{}, runner.args...)
+	args = append(args, resolvedPath)
+	cmd := exec.CommandContext(fixCtx, runner.command, args...)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -98,4 +109,48 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return s[:max]
+}
+
+type runnerSpec struct {
+	allowlistKey string
+	command      string
+	args         []string
+}
+
+func resolveRunner(goos, scriptPath string) (runnerSpec, error) {
+	ext := strings.ToLower(filepath.Ext(scriptPath))
+	switch goos {
+	case "windows":
+		switch ext {
+		case ".bat", ".cmd":
+			return runnerSpec{
+				allowlistKey: "cmd",
+				command:      "cmd.exe",
+				args:         []string{"/C"},
+			}, nil
+		case ".sh", "":
+			return runnerSpec{
+				allowlistKey: "bash",
+				command:      "bash",
+			}, nil
+		default:
+			return runnerSpec{}, fmt.Errorf("unsupported script extension %q on windows (supported: .bat, .cmd, .sh)", ext)
+		}
+	default:
+		switch ext {
+		case ".bat", ".cmd":
+			return runnerSpec{}, fmt.Errorf("%s scripts can only run on windows workers", ext)
+		default:
+			return runnerSpec{
+				allowlistKey: "bash",
+				command:      "bash",
+			}, nil
+		}
+	}
+}
+
+func normalizeAllowedCommand(cmd string) string {
+	c := strings.ToLower(strings.TrimSpace(cmd))
+	c = strings.TrimSuffix(c, ".exe")
+	return c
 }

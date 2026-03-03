@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 )
@@ -34,7 +35,7 @@ func Load() Config {
 		RedisDB:            envInt("REDIS_DB", 0),
 		SchedulerTickSec:   envInt("SCHEDULER_TICK_SEC", 2),
 		FixScriptsDir:      envOrDefault("FIX_SCRIPTS_DIR", "scripts/fixes"),
-		AllowedFixCommands: envCSV("ALLOWED_FIX_COMMANDS", []string{"bash"}),
+		AllowedFixCommands: envCSV("ALLOWED_FIX_COMMANDS", defaultAllowedFixCommands()),
 		AlertCooldownSec:   envInt("ALERT_COOLDOWN_SEC", 300),
 		Environment:        envOrDefault("APP_ENV", "dev"),
 		UIDir:              os.Getenv("UI_DIR"),
@@ -44,6 +45,13 @@ func Load() Config {
 		EmailPass:          os.Getenv("EMAIL_PASS"),
 		EmailFrom:          envOrDefault("EMAIL_FROM", os.Getenv("EMAIL_USER")),
 	}
+}
+
+func defaultAllowedFixCommands() []string {
+	if runtime.GOOS == "windows" {
+		return []string{"cmd", "bash"}
+	}
+	return []string{"bash"}
 }
 
 func envOrDefault(key, fallback string) string {

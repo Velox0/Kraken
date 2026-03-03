@@ -277,7 +277,7 @@
                   <label
                     >Script Path<input
                       id="fixScriptPath"
-                      placeholder="restart-service.sh"
+                      placeholder="script.sh"
                       required
                   /></label>
                   <label
@@ -329,10 +329,10 @@
                       required
                   /></label>
                   <label
-                    >Script File (.sh)<input
+                    >Script File (.sh/.bat/.cmd)<input
                       id="uploadFixFile"
                       type="file"
-                      accept=".sh"
+                      accept=".sh,.bat,.cmd"
                       required
                   /></label>
                   <label class="full"
@@ -438,7 +438,8 @@
                 </label>
                 <label class="full">
                   <span class="muted"
-                    >If no profile is selected, alerts use env default SMTP.</span
+                    >If no profile is selected, alerts use env default
+                    SMTP.</span
                   >
                 </label>
                 <div class="full">
@@ -449,9 +450,7 @@
                   <h3>Create SMTP Profile</h3>
                 </div>
                 <label
-                  >SMTP Host<input
-                    id="smtpHost"
-                    placeholder="smtp.gmail.com"
+                  >SMTP Host<input id="smtpHost" placeholder="smtp.gmail.com"
                 /></label>
                 <label
                   >SMTP Port<input
@@ -473,7 +472,11 @@
                     id="smtpFrom"
                     placeholder="alerts@domain.com"
                 /></label>
-                <button id="createSMTPBtn" class="btn secondary full" type="button">
+                <button
+                  id="createSMTPBtn"
+                  class="btn secondary full"
+                  type="button"
+                >
                   Create SMTP Profile
                 </button>
                 <div class="full settings-checks-head">
@@ -492,11 +495,8 @@
                   >Opened Subject<input id="tplOpenedSubject"
                 /></label>
                 <label class="full"
-                  >Opened Body<textarea
-                    id="tplOpenedBody"
-                    rows="4"
-                  ></textarea
-                ></label>
+                  >Opened Body<textarea id="tplOpenedBody" rows="4"></textarea>
+                </label>
                 <label class="full"
                   >Resolved Subject<input id="tplResolvedSubject"
                 /></label>
@@ -504,8 +504,8 @@
                   >Resolved Body<textarea
                     id="tplResolvedBody"
                     rows="4"
-                  ></textarea
-                ></label>
+                  ></textarea>
+                </label>
                 <label class="full"
                   >Repeated Subject<input id="tplRepeatedSubject"
                 /></label>
@@ -513,8 +513,8 @@
                   >Repeated Body<textarea
                     id="tplRepeatedBody"
                     rows="4"
-                  ></textarea
-                ></label>
+                  ></textarea>
+                </label>
                 <label class="full"
                   >Autofix Limit Subject<input id="tplAutofixSubject"
                 /></label>
@@ -522,8 +522,8 @@
                   >Autofix Limit Body<textarea
                     id="tplAutofixBody"
                     rows="4"
-                  ></textarea
-                ></label>
+                  ></textarea>
+                </label>
               </form>
             </div>
 
@@ -650,7 +650,7 @@
                   >Script Path<input
                     id="editFixScriptPath"
                     required
-                    placeholder="restart-service.sh"
+                    placeholder="restart-service.sh or restart-service.bat"
                 /></label>
                 <label
                   >Timeout (sec)<input

@@ -18,7 +18,7 @@ Kraken is a project-based uptime monitor with queue-driven checks, incidents, SM
 - SMTP alerts on open / resolve / repeated failures
 - Autofix: automatically run fix scripts when incidents open, with a configurable retry limit
 - Escalation email when autofix retries are exhausted (via env-based SMTP or project SMTP profile)
-- Upload `.sh` fix scripts from the UI
+- Upload `.sh`, `.bat`, or `.cmd` fix scripts from the UI
 - Edit and delete fix scripts and their error patterns
 - Built-in SPA frontend — create projects, view logs/incidents/check runs, manage fixes, and view time-based uptime charts
 
@@ -139,7 +139,7 @@ make app
 | `REDIS_DB`             | `0`                                                                  | Redis database number                                         |
 | `SCHEDULER_TICK_SEC`   | `2`                                                                  | How often the scheduler looks for due projects                |
 | `FIX_SCRIPTS_DIR`      | `scripts/fixes`                                                      | Directory containing fix shell scripts                        |
-| `ALLOWED_FIX_COMMANDS` | `bash`                                                               | Comma-separated allowlist of commands for fix execution       |
+| `ALLOWED_FIX_COMMANDS` | `bash` (Linux/macOS) / `cmd,bash` (Windows)                          | Comma-separated allowlist of commands for fix execution       |
 | `ALERT_COOLDOWN_SEC`   | `300`                                                                | Minimum seconds between repeated alerts for the same incident |
 | `APP_ENV`              | `dev`                                                                | Environment name                                              |
 | `UI_DIR`               |                                                                      | Serve UI from disk instead of embedded FS (for dev)           |
@@ -193,7 +193,7 @@ make app
 | POST   | `/v1/projects/{projectID}/fixes`         | Create fix              |
 | PATCH  | `/v1/projects/{projectID}/fixes/{fixID}` | Update fix              |
 | DELETE | `/v1/projects/{projectID}/fixes/{fixID}` | Delete fix              |
-| POST   | `/v1/fixes/upload`                       | Upload `.sh` fix script |
+| POST   | `/v1/fixes/upload`                       | Upload `.sh`/`.bat`/`.cmd` fix script |
 | POST   | `/v1/fixes/{fixID}/run`                  | Run fix manually        |
 
 ### SMTP Profiles
@@ -220,6 +220,9 @@ Per-project email templates:
 
 - Scripts are constrained to `FIX_SCRIPTS_DIR`
 - Only commands in `ALLOWED_FIX_COMMANDS` may execute
+- Runner selection is based on script extension:
+  - Linux/macOS: executes via `bash` (default)
+  - Windows: executes `.bat`/`.cmd` via `cmd`, `.sh` via `bash`
 - Per-fix execution timeout
 - Full output logged to the project logs table
 - **Retry limit:** configurable per project via `max_autofix_retries` in settings (0 = unlimited)

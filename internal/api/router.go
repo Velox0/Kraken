@@ -622,8 +622,8 @@ func (h *Handler) uploadProjectFix(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ext := strings.ToLower(filepath.Ext(header.Filename))
-	if ext != ".sh" {
-		writeError(w, http.StatusBadRequest, errors.New("only .sh files are allowed"))
+	if ext != ".sh" && ext != ".bat" && ext != ".cmd" {
+		writeError(w, http.StatusBadRequest, errors.New("only .sh, .bat and .cmd files are allowed"))
 		return
 	}
 
@@ -631,7 +631,7 @@ func (h *Handler) uploadProjectFix(w http.ResponseWriter, r *http.Request) {
 	if safeName == "" {
 		safeName = "fix"
 	}
-	storedFileName := "uploaded-" + strconv.FormatInt(time.Now().UTC().Unix(), 10) + "-" + safeName + ".sh"
+	storedFileName := "uploaded-" + strconv.FormatInt(time.Now().UTC().Unix(), 10) + "-" + safeName + ext
 
 	if err := os.MkdirAll(h.fixScriptsDir, 0o750); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
