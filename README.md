@@ -207,6 +207,13 @@ Alert routing order:
 - Project SMTP profile (if selected in project settings)
 - Env default SMTP (`EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USER`, `EMAIL_PASS`, `EMAIL_FROM`)
 
+Per-project email templates:
+- Editable from Settings UI for: `opened`, `resolved`, `repeated`, and `autofix limit`.
+- Supported placeholders in subject/body:
+  `{project_name}`, `{domain}`, `{event}`, `{incident_id}`, `{timestamp}`,
+  `{error}`, `{autofix_status}`, `{check_id}`, `{check_type}`, `{check_target}`,
+  `{autofix_attempts}`, `{max_retries}`.
+
 ---
 
 ## Autofix

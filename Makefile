@@ -39,6 +39,7 @@ migrate:
 	psql "$$DATABASE_URL" -f db/migrations/0001_init.sql
 	psql "$$DATABASE_URL" -f db/migrations/0002_uptime_rollups.sql
 	psql "$$DATABASE_URL" -f db/migrations/0003_autofix_retries.sql
+	psql "$$DATABASE_URL" -f db/migrations/0004_email_templates.sql
 
 seed:
 	@for f in db/seeds/*.sql; do echo "==> $$f"; psql "$$DATABASE_URL" -f "$$f"; done

@@ -114,6 +114,14 @@ const el = {
   settingsAutofix: document.getElementById("settingsAutofix"),
   settingsMaxRetries: document.getElementById("settingsMaxRetries"),
   settingsEmails: document.getElementById("settingsEmails"),
+  tplOpenedSubject: document.getElementById("tplOpenedSubject"),
+  tplOpenedBody: document.getElementById("tplOpenedBody"),
+  tplResolvedSubject: document.getElementById("tplResolvedSubject"),
+  tplResolvedBody: document.getElementById("tplResolvedBody"),
+  tplRepeatedSubject: document.getElementById("tplRepeatedSubject"),
+  tplRepeatedBody: document.getElementById("tplRepeatedBody"),
+  tplAutofixSubject: document.getElementById("tplAutofixSubject"),
+  tplAutofixBody: document.getElementById("tplAutofixBody"),
   settingsChecksRows: document.getElementById("settingsChecksRows"),
   addSettingsCheckBtn: document.getElementById("addSettingsCheckBtn"),
   settingsModal: document.getElementById("settingsModal"),
@@ -956,6 +964,14 @@ function renderSettingsForm() {
     if (el.smtpProfilesList) {
       el.smtpProfilesList.innerHTML = `<div class="list-item"><div class="main">No SMTP profiles</div></div>`;
     }
+    if (el.tplOpenedSubject) el.tplOpenedSubject.value = "";
+    if (el.tplOpenedBody) el.tplOpenedBody.value = "";
+    if (el.tplResolvedSubject) el.tplResolvedSubject.value = "";
+    if (el.tplResolvedBody) el.tplResolvedBody.value = "";
+    if (el.tplRepeatedSubject) el.tplRepeatedSubject.value = "";
+    if (el.tplRepeatedBody) el.tplRepeatedBody.value = "";
+    if (el.tplAutofixSubject) el.tplAutofixSubject.value = "";
+    if (el.tplAutofixBody) el.tplAutofixBody.value = "";
     return;
   }
 
@@ -974,6 +990,30 @@ function renderSettingsForm() {
   el.settingsEmails.value = (state.selectedProject.alert_emails || []).join(
     ", ",
   );
+  if (el.tplOpenedSubject) {
+    el.tplOpenedSubject.value = state.selectedProject.email_subject_opened || "";
+  }
+  if (el.tplOpenedBody) {
+    el.tplOpenedBody.value = state.selectedProject.email_body_opened || "";
+  }
+  if (el.tplResolvedSubject) {
+    el.tplResolvedSubject.value = state.selectedProject.email_subject_resolved || "";
+  }
+  if (el.tplResolvedBody) {
+    el.tplResolvedBody.value = state.selectedProject.email_body_resolved || "";
+  }
+  if (el.tplRepeatedSubject) {
+    el.tplRepeatedSubject.value = state.selectedProject.email_subject_repeated || "";
+  }
+  if (el.tplRepeatedBody) {
+    el.tplRepeatedBody.value = state.selectedProject.email_body_repeated || "";
+  }
+  if (el.tplAutofixSubject) {
+    el.tplAutofixSubject.value = state.selectedProject.email_subject_autofix_limit || "";
+  }
+  if (el.tplAutofixBody) {
+    el.tplAutofixBody.value = state.selectedProject.email_body_autofix_limit || "";
+  }
 
   const smtpProfiles = state.data.smtpProfiles || [];
   const selectedSMTP = state.selectedProject.smtp_profile_id;
@@ -1119,6 +1159,14 @@ async function saveSettings(event) {
     max_autofix_retries: Number(el.settingsMaxRetries.value),
     smtp_profile_id: smtpProfileID && smtpProfileID > 0 ? smtpProfileID : null,
     alert_emails: emails,
+    email_subject_opened: (el.tplOpenedSubject?.value || "").trim(),
+    email_body_opened: (el.tplOpenedBody?.value || "").trim(),
+    email_subject_resolved: (el.tplResolvedSubject?.value || "").trim(),
+    email_body_resolved: (el.tplResolvedBody?.value || "").trim(),
+    email_subject_repeated: (el.tplRepeatedSubject?.value || "").trim(),
+    email_body_repeated: (el.tplRepeatedBody?.value || "").trim(),
+    email_subject_autofix_limit: (el.tplAutofixSubject?.value || "").trim(),
+    email_body_autofix_limit: (el.tplAutofixBody?.value || "").trim(),
     checks,
   };
 

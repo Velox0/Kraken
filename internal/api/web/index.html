@@ -397,6 +397,41 @@
                     min="1"
                     required
                 /></label>
+                <label class="checkbox-row">
+                  <input id="settingsAutofix" type="checkbox" /> Enable Autofix
+                </label>
+                <label
+                  >Max Autofix Retries
+                  <input
+                    id="settingsMaxRetries"
+                    type="number"
+                    min="0"
+                    value="3"
+                    placeholder="0 = unlimited"
+                  />
+                </label>
+                <div class="full settings-checks-head">
+                  <h3>Paths / Checks</h3>
+                  <button
+                    type="button"
+                    id="addSettingsCheckBtn"
+                    class="btn secondary"
+                  >
+                    + Add Path
+                  </button>
+                </div>
+                <div
+                  id="settingsChecksRows"
+                  class="full settings-checks-rows"
+                ></div>
+                <div class="full settings-checks-head">
+                  <h3>Email Alerts</h3>
+                </div>
+                <label class="full"
+                  >Alert Emails (comma-separated)<input
+                    id="settingsEmails"
+                    placeholder="team@example.com,ops@example.com"
+                /></label>
                 <label
                   >SMTP Profile
                   <select id="settingsSMTP"></select>
@@ -441,38 +476,54 @@
                 <button id="createSMTPBtn" class="btn secondary full" type="button">
                   Create SMTP Profile
                 </button>
-                <label class="checkbox-row">
-                  <input id="settingsAutofix" type="checkbox" /> Enable Autofix
-                </label>
-                <label
-                  >Max Autofix Retries
-                  <input
-                    id="settingsMaxRetries"
-                    type="number"
-                    min="0"
-                    value="3"
-                    placeholder="0 = unlimited"
-                  />
-                </label>
-                <label class="full"
-                  >Alert Emails (comma-separated)<input
-                    id="settingsEmails"
-                    placeholder="team@example.com,ops@example.com"
-                /></label>
                 <div class="full settings-checks-head">
-                  <h3>Paths / Checks</h3>
-                  <button
-                    type="button"
-                    id="addSettingsCheckBtn"
-                    class="btn secondary"
-                  >
-                    + Add Path
-                  </button>
+                  <h3>Email Templates</h3>
                 </div>
-                <div
-                  id="settingsChecksRows"
-                  class="full settings-checks-rows"
-                ></div>
+                <p class="full muted">
+                  Placeholders: <code>{project_name}</code>,
+                  <code>{domain}</code>, <code>{event}</code>,
+                  <code>{incident_id}</code>, <code>{timestamp}</code>,
+                  <code>{error}</code>, <code>{autofix_status}</code>,
+                  <code>{check_id}</code>, <code>{check_type}</code>,
+                  <code>{check_target}</code>, <code>{autofix_attempts}</code>,
+                  <code>{max_retries}</code>.
+                </p>
+                <label class="full"
+                  >Opened Subject<input id="tplOpenedSubject"
+                /></label>
+                <label class="full"
+                  >Opened Body<textarea
+                    id="tplOpenedBody"
+                    rows="4"
+                  ></textarea
+                ></label>
+                <label class="full"
+                  >Resolved Subject<input id="tplResolvedSubject"
+                /></label>
+                <label class="full"
+                  >Resolved Body<textarea
+                    id="tplResolvedBody"
+                    rows="4"
+                  ></textarea
+                ></label>
+                <label class="full"
+                  >Repeated Subject<input id="tplRepeatedSubject"
+                /></label>
+                <label class="full"
+                  >Repeated Body<textarea
+                    id="tplRepeatedBody"
+                    rows="4"
+                  ></textarea
+                ></label>
+                <label class="full"
+                  >Autofix Limit Subject<input id="tplAutofixSubject"
+                /></label>
+                <label class="full"
+                  >Autofix Limit Body<textarea
+                    id="tplAutofixBody"
+                    rows="4"
+                  ></textarea
+                ></label>
               </form>
             </div>
 

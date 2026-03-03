@@ -34,39 +34,155 @@ func (s *Store) Close() {
 }
 
 type Project struct {
-	ID                int64     `json:"id"`
-	Name              string    `json:"name"`
-	Domain            string    `json:"domain"`
-	CheckIntervalSec  int       `json:"check_interval_sec"`
-	FailureThreshold  int       `json:"failure_threshold"`
-	AutofixEnabled    bool      `json:"autofix_enabled"`
-	MaxAutofixRetries int       `json:"max_autofix_retries"`
-	SMTPProfileID     *int64    `json:"smtp_profile_id,omitempty"`
-	AlertEmails       []string  `json:"alert_emails"`
-	NextCheckAt       time.Time `json:"next_check_at"`
-	CreatedAt         time.Time `json:"created_at"`
+	ID                       int64     `json:"id"`
+	Name                     string    `json:"name"`
+	Domain                   string    `json:"domain"`
+	CheckIntervalSec         int       `json:"check_interval_sec"`
+	FailureThreshold         int       `json:"failure_threshold"`
+	AutofixEnabled           bool      `json:"autofix_enabled"`
+	MaxAutofixRetries        int       `json:"max_autofix_retries"`
+	SMTPProfileID            *int64    `json:"smtp_profile_id,omitempty"`
+	AlertEmails              []string  `json:"alert_emails"`
+	EmailSubjectOpened       string    `json:"email_subject_opened"`
+	EmailBodyOpened          string    `json:"email_body_opened"`
+	EmailSubjectResolved     string    `json:"email_subject_resolved"`
+	EmailBodyResolved        string    `json:"email_body_resolved"`
+	EmailSubjectRepeated     string    `json:"email_subject_repeated"`
+	EmailBodyRepeated        string    `json:"email_body_repeated"`
+	EmailSubjectAutofixLimit string    `json:"email_subject_autofix_limit"`
+	EmailBodyAutofixLimit    string    `json:"email_body_autofix_limit"`
+	NextCheckAt              time.Time `json:"next_check_at"`
+	CreatedAt                time.Time `json:"created_at"`
 }
 
 type CreateProjectParams struct {
-	Name              string   `json:"name"`
-	Domain            string   `json:"domain"`
-	CheckIntervalSec  int      `json:"check_interval_sec"`
-	FailureThreshold  int      `json:"failure_threshold"`
-	AutofixEnabled    bool     `json:"autofix_enabled"`
-	MaxAutofixRetries int      `json:"max_autofix_retries"`
-	SMTPProfileID     *int64   `json:"smtp_profile_id"`
-	AlertEmails       []string `json:"alert_emails"`
+	Name                     string   `json:"name"`
+	Domain                   string   `json:"domain"`
+	CheckIntervalSec         int      `json:"check_interval_sec"`
+	FailureThreshold         int      `json:"failure_threshold"`
+	AutofixEnabled           bool     `json:"autofix_enabled"`
+	MaxAutofixRetries        int      `json:"max_autofix_retries"`
+	SMTPProfileID            *int64   `json:"smtp_profile_id"`
+	AlertEmails              []string `json:"alert_emails"`
+	EmailSubjectOpened       string   `json:"email_subject_opened"`
+	EmailBodyOpened          string   `json:"email_body_opened"`
+	EmailSubjectResolved     string   `json:"email_subject_resolved"`
+	EmailBodyResolved        string   `json:"email_body_resolved"`
+	EmailSubjectRepeated     string   `json:"email_subject_repeated"`
+	EmailBodyRepeated        string   `json:"email_body_repeated"`
+	EmailSubjectAutofixLimit string   `json:"email_subject_autofix_limit"`
+	EmailBodyAutofixLimit    string   `json:"email_body_autofix_limit"`
 }
 
 type UpdateProjectParams struct {
-	Name              string   `json:"name"`
-	Domain            string   `json:"domain"`
-	CheckIntervalSec  int      `json:"check_interval_sec"`
-	FailureThreshold  int      `json:"failure_threshold"`
-	AutofixEnabled    bool     `json:"autofix_enabled"`
-	MaxAutofixRetries int      `json:"max_autofix_retries"`
-	SMTPProfileID     *int64   `json:"smtp_profile_id"`
-	AlertEmails       []string `json:"alert_emails"`
+	Name                     string   `json:"name"`
+	Domain                   string   `json:"domain"`
+	CheckIntervalSec         int      `json:"check_interval_sec"`
+	FailureThreshold         int      `json:"failure_threshold"`
+	AutofixEnabled           bool     `json:"autofix_enabled"`
+	MaxAutofixRetries        int      `json:"max_autofix_retries"`
+	SMTPProfileID            *int64   `json:"smtp_profile_id"`
+	AlertEmails              []string `json:"alert_emails"`
+	EmailSubjectOpened       string   `json:"email_subject_opened"`
+	EmailBodyOpened          string   `json:"email_body_opened"`
+	EmailSubjectResolved     string   `json:"email_subject_resolved"`
+	EmailBodyResolved        string   `json:"email_body_resolved"`
+	EmailSubjectRepeated     string   `json:"email_subject_repeated"`
+	EmailBodyRepeated        string   `json:"email_body_repeated"`
+	EmailSubjectAutofixLimit string   `json:"email_subject_autofix_limit"`
+	EmailBodyAutofixLimit    string   `json:"email_body_autofix_limit"`
+}
+
+const (
+	defaultEmailSubjectOpened       = "[DOWN] {domain} is unreachable"
+	defaultEmailBodyOpened          = "Project: {project_name}\nDomain: {domain}\nEvent: opened\nIncident ID: {incident_id}\nCheck: #{check_id} {check_type} {check_target}\nError: {error}\nTimestamp: {timestamp}\nAutofix: {autofix_status}"
+	defaultEmailSubjectResolved     = "[RESOLVED] {domain} recovered"
+	defaultEmailBodyResolved        = "Project: {project_name}\nDomain: {domain}\nEvent: resolved\nIncident ID: {incident_id}\nCheck: #{check_id} {check_type} {check_target}\nTimestamp: {timestamp}\nAutofix: {autofix_status}"
+	defaultEmailSubjectRepeated     = "[DOWN][REPEATED] {domain} still failing"
+	defaultEmailBodyRepeated        = "Project: {project_name}\nDomain: {domain}\nEvent: repeated\nIncident ID: {incident_id}\nCheck: #{check_id} {check_type} {check_target}\nError: {error}\nTimestamp: {timestamp}\nAutofix: {autofix_status}"
+	defaultEmailSubjectAutofixLimit = "[AUTOFIX LIMIT] {domain} retries exhausted"
+	defaultEmailBodyAutofixLimit    = "Project: {project_name}\nDomain: {domain}\nIncident ID: {incident_id}\nAutofix attempts: {autofix_attempts}\nMax retries: {max_retries}\nTimestamp: {timestamp}\n\nAutomatic fixes have been exhausted. Manual intervention required."
+)
+
+func normalizeProjectEmailTemplates(p *Project) {
+	if strings.TrimSpace(p.EmailSubjectOpened) == "" {
+		p.EmailSubjectOpened = defaultEmailSubjectOpened
+	}
+	if strings.TrimSpace(p.EmailBodyOpened) == "" {
+		p.EmailBodyOpened = defaultEmailBodyOpened
+	}
+	if strings.TrimSpace(p.EmailSubjectResolved) == "" {
+		p.EmailSubjectResolved = defaultEmailSubjectResolved
+	}
+	if strings.TrimSpace(p.EmailBodyResolved) == "" {
+		p.EmailBodyResolved = defaultEmailBodyResolved
+	}
+	if strings.TrimSpace(p.EmailSubjectRepeated) == "" {
+		p.EmailSubjectRepeated = defaultEmailSubjectRepeated
+	}
+	if strings.TrimSpace(p.EmailBodyRepeated) == "" {
+		p.EmailBodyRepeated = defaultEmailBodyRepeated
+	}
+	if strings.TrimSpace(p.EmailSubjectAutofixLimit) == "" {
+		p.EmailSubjectAutofixLimit = defaultEmailSubjectAutofixLimit
+	}
+	if strings.TrimSpace(p.EmailBodyAutofixLimit) == "" {
+		p.EmailBodyAutofixLimit = defaultEmailBodyAutofixLimit
+	}
+}
+
+func normalizeCreateProjectEmailParams(p *CreateProjectParams) {
+	if strings.TrimSpace(p.EmailSubjectOpened) == "" {
+		p.EmailSubjectOpened = defaultEmailSubjectOpened
+	}
+	if strings.TrimSpace(p.EmailBodyOpened) == "" {
+		p.EmailBodyOpened = defaultEmailBodyOpened
+	}
+	if strings.TrimSpace(p.EmailSubjectResolved) == "" {
+		p.EmailSubjectResolved = defaultEmailSubjectResolved
+	}
+	if strings.TrimSpace(p.EmailBodyResolved) == "" {
+		p.EmailBodyResolved = defaultEmailBodyResolved
+	}
+	if strings.TrimSpace(p.EmailSubjectRepeated) == "" {
+		p.EmailSubjectRepeated = defaultEmailSubjectRepeated
+	}
+	if strings.TrimSpace(p.EmailBodyRepeated) == "" {
+		p.EmailBodyRepeated = defaultEmailBodyRepeated
+	}
+	if strings.TrimSpace(p.EmailSubjectAutofixLimit) == "" {
+		p.EmailSubjectAutofixLimit = defaultEmailSubjectAutofixLimit
+	}
+	if strings.TrimSpace(p.EmailBodyAutofixLimit) == "" {
+		p.EmailBodyAutofixLimit = defaultEmailBodyAutofixLimit
+	}
+}
+
+func normalizeProjectEmailParams(p *UpdateProjectParams) {
+	if strings.TrimSpace(p.EmailSubjectOpened) == "" {
+		p.EmailSubjectOpened = defaultEmailSubjectOpened
+	}
+	if strings.TrimSpace(p.EmailBodyOpened) == "" {
+		p.EmailBodyOpened = defaultEmailBodyOpened
+	}
+	if strings.TrimSpace(p.EmailSubjectResolved) == "" {
+		p.EmailSubjectResolved = defaultEmailSubjectResolved
+	}
+	if strings.TrimSpace(p.EmailBodyResolved) == "" {
+		p.EmailBodyResolved = defaultEmailBodyResolved
+	}
+	if strings.TrimSpace(p.EmailSubjectRepeated) == "" {
+		p.EmailSubjectRepeated = defaultEmailSubjectRepeated
+	}
+	if strings.TrimSpace(p.EmailBodyRepeated) == "" {
+		p.EmailBodyRepeated = defaultEmailBodyRepeated
+	}
+	if strings.TrimSpace(p.EmailSubjectAutofixLimit) == "" {
+		p.EmailSubjectAutofixLimit = defaultEmailSubjectAutofixLimit
+	}
+	if strings.TrimSpace(p.EmailBodyAutofixLimit) == "" {
+		p.EmailBodyAutofixLimit = defaultEmailBodyAutofixLimit
+	}
 }
 
 func (s *Store) CreateProject(ctx context.Context, p CreateProjectParams) (Project, error) {
@@ -79,15 +195,24 @@ func (s *Store) CreateProject(ctx context.Context, p CreateProjectParams) (Proje
 	if p.AlertEmails == nil {
 		p.AlertEmails = []string{}
 	}
+	normalizeCreateProjectEmailParams(&p)
 	var project Project
 	var smtp sql.NullInt64
 	if p.SMTPProfileID != nil {
 		smtp = sql.NullInt64{Int64: *p.SMTPProfileID, Valid: true}
 	}
 	query := `
-		INSERT INTO projects (name, domain, check_interval_sec, failure_threshold, autofix_enabled, max_autofix_retries, smtp_profile_id, alert_emails)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		RETURNING id, name, domain, check_interval_sec, failure_threshold, autofix_enabled, max_autofix_retries, smtp_profile_id, alert_emails, next_check_at, created_at
+		INSERT INTO projects (
+			name, domain, check_interval_sec, failure_threshold, autofix_enabled, max_autofix_retries, smtp_profile_id, alert_emails,
+			email_subject_opened, email_body_opened, email_subject_resolved, email_body_resolved,
+			email_subject_repeated, email_body_repeated, email_subject_autofix_limit, email_body_autofix_limit
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+		RETURNING
+			id, name, domain, check_interval_sec, failure_threshold, autofix_enabled, max_autofix_retries, smtp_profile_id, alert_emails,
+			email_subject_opened, email_body_opened, email_subject_resolved, email_body_resolved,
+			email_subject_repeated, email_body_repeated, email_subject_autofix_limit, email_body_autofix_limit,
+			next_check_at, created_at
 	`
 	var smtpID sql.NullInt64
 	err := s.pool.QueryRow(ctx, query,
@@ -99,6 +224,14 @@ func (s *Store) CreateProject(ctx context.Context, p CreateProjectParams) (Proje
 		p.MaxAutofixRetries,
 		nullInt64Arg(smtp),
 		p.AlertEmails,
+		p.EmailSubjectOpened,
+		p.EmailBodyOpened,
+		p.EmailSubjectResolved,
+		p.EmailBodyResolved,
+		p.EmailSubjectRepeated,
+		p.EmailBodyRepeated,
+		p.EmailSubjectAutofixLimit,
+		p.EmailBodyAutofixLimit,
 	).Scan(
 		&project.ID,
 		&project.Name,
@@ -109,6 +242,14 @@ func (s *Store) CreateProject(ctx context.Context, p CreateProjectParams) (Proje
 		&project.MaxAutofixRetries,
 		&smtpID,
 		&project.AlertEmails,
+		&project.EmailSubjectOpened,
+		&project.EmailBodyOpened,
+		&project.EmailSubjectResolved,
+		&project.EmailBodyResolved,
+		&project.EmailSubjectRepeated,
+		&project.EmailBodyRepeated,
+		&project.EmailSubjectAutofixLimit,
+		&project.EmailBodyAutofixLimit,
 		&project.NextCheckAt,
 		&project.CreatedAt,
 	)
@@ -118,6 +259,7 @@ func (s *Store) CreateProject(ctx context.Context, p CreateProjectParams) (Proje
 	if smtpID.Valid {
 		project.SMTPProfileID = &smtpID.Int64
 	}
+	normalizeProjectEmailTemplates(&project)
 	_, err = s.pool.Exec(ctx, `INSERT INTO project_health(project_id) VALUES($1) ON CONFLICT DO NOTHING`, project.ID)
 	if err != nil {
 		return Project{}, err
@@ -127,7 +269,11 @@ func (s *Store) CreateProject(ctx context.Context, p CreateProjectParams) (Proje
 
 func (s *Store) ListProjects(ctx context.Context) ([]Project, error) {
 	query := `
-		SELECT id, name, domain, check_interval_sec, failure_threshold, autofix_enabled, max_autofix_retries, smtp_profile_id, alert_emails, next_check_at, created_at
+		SELECT
+			id, name, domain, check_interval_sec, failure_threshold, autofix_enabled, max_autofix_retries, smtp_profile_id, alert_emails,
+			email_subject_opened, email_body_opened, email_subject_resolved, email_body_resolved,
+			email_subject_repeated, email_body_repeated, email_subject_autofix_limit, email_body_autofix_limit,
+			next_check_at, created_at
 		FROM projects
 		ORDER BY id ASC
 	`
@@ -141,12 +287,18 @@ func (s *Store) ListProjects(ctx context.Context) ([]Project, error) {
 	for rows.Next() {
 		var p Project
 		var smtpID sql.NullInt64
-		if err := rows.Scan(&p.ID, &p.Name, &p.Domain, &p.CheckIntervalSec, &p.FailureThreshold, &p.AutofixEnabled, &p.MaxAutofixRetries, &smtpID, &p.AlertEmails, &p.NextCheckAt, &p.CreatedAt); err != nil {
+		if err := rows.Scan(
+			&p.ID, &p.Name, &p.Domain, &p.CheckIntervalSec, &p.FailureThreshold, &p.AutofixEnabled, &p.MaxAutofixRetries, &smtpID, &p.AlertEmails,
+			&p.EmailSubjectOpened, &p.EmailBodyOpened, &p.EmailSubjectResolved, &p.EmailBodyResolved,
+			&p.EmailSubjectRepeated, &p.EmailBodyRepeated, &p.EmailSubjectAutofixLimit, &p.EmailBodyAutofixLimit,
+			&p.NextCheckAt, &p.CreatedAt,
+		); err != nil {
 			return nil, err
 		}
 		if smtpID.Valid {
 			p.SMTPProfileID = &smtpID.Int64
 		}
+		normalizeProjectEmailTemplates(&p)
 		projects = append(projects, p)
 	}
 	return projects, rows.Err()
@@ -156,7 +308,11 @@ func (s *Store) GetProjectByID(ctx context.Context, projectID int64) (*Project, 
 	var project Project
 	var smtpID sql.NullInt64
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, name, domain, check_interval_sec, failure_threshold, autofix_enabled, max_autofix_retries, smtp_profile_id, alert_emails, next_check_at, created_at
+		SELECT
+			id, name, domain, check_interval_sec, failure_threshold, autofix_enabled, max_autofix_retries, smtp_profile_id, alert_emails,
+			email_subject_opened, email_body_opened, email_subject_resolved, email_body_resolved,
+			email_subject_repeated, email_body_repeated, email_subject_autofix_limit, email_body_autofix_limit,
+			next_check_at, created_at
 		FROM projects
 		WHERE id=$1
 	`, projectID).Scan(
@@ -169,6 +325,14 @@ func (s *Store) GetProjectByID(ctx context.Context, projectID int64) (*Project, 
 		&project.MaxAutofixRetries,
 		&smtpID,
 		&project.AlertEmails,
+		&project.EmailSubjectOpened,
+		&project.EmailBodyOpened,
+		&project.EmailSubjectResolved,
+		&project.EmailBodyResolved,
+		&project.EmailSubjectRepeated,
+		&project.EmailBodyRepeated,
+		&project.EmailSubjectAutofixLimit,
+		&project.EmailBodyAutofixLimit,
 		&project.NextCheckAt,
 		&project.CreatedAt,
 	)
@@ -181,6 +345,7 @@ func (s *Store) GetProjectByID(ctx context.Context, projectID int64) (*Project, 
 	if smtpID.Valid {
 		project.SMTPProfileID = &smtpID.Int64
 	}
+	normalizeProjectEmailTemplates(&project)
 	return &project, nil
 }
 
@@ -197,6 +362,7 @@ func (s *Store) UpdateProject(ctx context.Context, projectID int64, p UpdateProj
 	if p.AlertEmails == nil {
 		p.AlertEmails = []string{}
 	}
+	normalizeProjectEmailParams(&p)
 
 	var project Project
 	var smtpArg sql.NullInt64
@@ -214,9 +380,21 @@ func (s *Store) UpdateProject(ctx context.Context, projectID int64, p UpdateProj
 			autofix_enabled=$6,
 			max_autofix_retries=$7,
 			smtp_profile_id=$8,
-			alert_emails=$9
+			alert_emails=$9,
+			email_subject_opened=$10,
+			email_body_opened=$11,
+			email_subject_resolved=$12,
+			email_body_resolved=$13,
+			email_subject_repeated=$14,
+			email_body_repeated=$15,
+			email_subject_autofix_limit=$16,
+			email_body_autofix_limit=$17
 		WHERE id=$1
-		RETURNING id, name, domain, check_interval_sec, failure_threshold, autofix_enabled, max_autofix_retries, smtp_profile_id, alert_emails, next_check_at, created_at
+		RETURNING
+			id, name, domain, check_interval_sec, failure_threshold, autofix_enabled, max_autofix_retries, smtp_profile_id, alert_emails,
+			email_subject_opened, email_body_opened, email_subject_resolved, email_body_resolved,
+			email_subject_repeated, email_body_repeated, email_subject_autofix_limit, email_body_autofix_limit,
+			next_check_at, created_at
 	`,
 		projectID,
 		strings.TrimSpace(p.Name),
@@ -227,6 +405,14 @@ func (s *Store) UpdateProject(ctx context.Context, projectID int64, p UpdateProj
 		p.MaxAutofixRetries,
 		nullInt64Arg(smtpArg),
 		p.AlertEmails,
+		p.EmailSubjectOpened,
+		p.EmailBodyOpened,
+		p.EmailSubjectResolved,
+		p.EmailBodyResolved,
+		p.EmailSubjectRepeated,
+		p.EmailBodyRepeated,
+		p.EmailSubjectAutofixLimit,
+		p.EmailBodyAutofixLimit,
 	).Scan(
 		&project.ID,
 		&project.Name,
@@ -237,6 +423,14 @@ func (s *Store) UpdateProject(ctx context.Context, projectID int64, p UpdateProj
 		&project.MaxAutofixRetries,
 		&smtpID,
 		&project.AlertEmails,
+		&project.EmailSubjectOpened,
+		&project.EmailBodyOpened,
+		&project.EmailSubjectResolved,
+		&project.EmailBodyResolved,
+		&project.EmailSubjectRepeated,
+		&project.EmailBodyRepeated,
+		&project.EmailSubjectAutofixLimit,
+		&project.EmailBodyAutofixLimit,
 		&project.NextCheckAt,
 		&project.CreatedAt,
 	)
@@ -249,6 +443,7 @@ func (s *Store) UpdateProject(ctx context.Context, projectID int64, p UpdateProj
 	if smtpID.Valid {
 		project.SMTPProfileID = &smtpID.Int64
 	}
+	normalizeProjectEmailTemplates(&project)
 	return project, nil
 }
 
@@ -553,22 +748,32 @@ func (s *Store) ListChecksForProjects(ctx context.Context, projectIDs []int64) (
 
 type CheckContext struct {
 	Check
-	ProjectName       string
-	ProjectDomain     string
-	FailureThreshold  int
-	AutofixEnabled    bool
-	MaxAutofixRetries int
-	ProjectSMTPID     *int64
-	AlertEmails       []string
-	CheckIntervalSec  int
-	ProjectNextCheck  time.Time
-	ProjectCreatedAt  time.Time
+	ProjectName              string
+	ProjectDomain            string
+	FailureThreshold         int
+	AutofixEnabled           bool
+	MaxAutofixRetries        int
+	ProjectSMTPID            *int64
+	AlertEmails              []string
+	EmailSubjectOpened       string
+	EmailBodyOpened          string
+	EmailSubjectResolved     string
+	EmailBodyResolved        string
+	EmailSubjectRepeated     string
+	EmailBodyRepeated        string
+	EmailSubjectAutofixLimit string
+	EmailBodyAutofixLimit    string
+	CheckIntervalSec         int
+	ProjectNextCheck         time.Time
+	ProjectCreatedAt         time.Time
 }
 
 func (s *Store) GetCheckContext(ctx context.Context, checkID int64) (CheckContext, error) {
 	query := `
 		SELECT c.id, c.project_id, c.type, c.target, c.timeout_ms, c.expected_status, c.created_at,
 		       p.name, p.domain, p.failure_threshold, p.autofix_enabled, p.max_autofix_retries, p.smtp_profile_id, p.alert_emails,
+		       p.email_subject_opened, p.email_body_opened, p.email_subject_resolved, p.email_body_resolved,
+		       p.email_subject_repeated, p.email_body_repeated, p.email_subject_autofix_limit, p.email_body_autofix_limit,
 		       p.check_interval_sec, p.next_check_at, p.created_at
 		FROM checks c
 		JOIN projects p ON p.id = c.project_id
@@ -592,6 +797,14 @@ func (s *Store) GetCheckContext(ctx context.Context, checkID int64) (CheckContex
 		&r.MaxAutofixRetries,
 		&smtp,
 		&r.AlertEmails,
+		&r.EmailSubjectOpened,
+		&r.EmailBodyOpened,
+		&r.EmailSubjectResolved,
+		&r.EmailBodyResolved,
+		&r.EmailSubjectRepeated,
+		&r.EmailBodyRepeated,
+		&r.EmailSubjectAutofixLimit,
+		&r.EmailBodyAutofixLimit,
 		&r.CheckIntervalSec,
 		&r.ProjectNextCheck,
 		&r.ProjectCreatedAt,
@@ -606,7 +819,35 @@ func (s *Store) GetCheckContext(ctx context.Context, checkID int64) (CheckContex
 	if smtp.Valid {
 		r.ProjectSMTPID = &smtp.Int64
 	}
+	normalizeCheckContextTemplates(&r)
 	return r, nil
+}
+
+func normalizeCheckContextTemplates(c *CheckContext) {
+	if strings.TrimSpace(c.EmailSubjectOpened) == "" {
+		c.EmailSubjectOpened = defaultEmailSubjectOpened
+	}
+	if strings.TrimSpace(c.EmailBodyOpened) == "" {
+		c.EmailBodyOpened = defaultEmailBodyOpened
+	}
+	if strings.TrimSpace(c.EmailSubjectResolved) == "" {
+		c.EmailSubjectResolved = defaultEmailSubjectResolved
+	}
+	if strings.TrimSpace(c.EmailBodyResolved) == "" {
+		c.EmailBodyResolved = defaultEmailBodyResolved
+	}
+	if strings.TrimSpace(c.EmailSubjectRepeated) == "" {
+		c.EmailSubjectRepeated = defaultEmailSubjectRepeated
+	}
+	if strings.TrimSpace(c.EmailBodyRepeated) == "" {
+		c.EmailBodyRepeated = defaultEmailBodyRepeated
+	}
+	if strings.TrimSpace(c.EmailSubjectAutofixLimit) == "" {
+		c.EmailSubjectAutofixLimit = defaultEmailSubjectAutofixLimit
+	}
+	if strings.TrimSpace(c.EmailBodyAutofixLimit) == "" {
+		c.EmailBodyAutofixLimit = defaultEmailBodyAutofixLimit
+	}
 }
 
 type ProjectHealth struct {

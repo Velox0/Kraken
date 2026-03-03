@@ -189,15 +189,23 @@ type projectSettingsResponse struct {
 }
 
 type updateProjectSettingsRequest struct {
-	Name              string                  `json:"name"`
-	Domain            string                  `json:"domain"`
-	CheckIntervalSec  int                     `json:"check_interval_sec"`
-	FailureThreshold  int                     `json:"failure_threshold"`
-	AutofixEnabled    bool                    `json:"autofix_enabled"`
-	MaxAutofixRetries int                     `json:"max_autofix_retries"`
-	SMTPProfileID     *int64                  `json:"smtp_profile_id"`
-	AlertEmails       []string                `json:"alert_emails"`
-	Checks            []db.ReplaceCheckParams `json:"checks"`
+	Name                     string                  `json:"name"`
+	Domain                   string                  `json:"domain"`
+	CheckIntervalSec         int                     `json:"check_interval_sec"`
+	FailureThreshold         int                     `json:"failure_threshold"`
+	AutofixEnabled           bool                    `json:"autofix_enabled"`
+	MaxAutofixRetries        int                     `json:"max_autofix_retries"`
+	SMTPProfileID            *int64                  `json:"smtp_profile_id"`
+	AlertEmails              []string                `json:"alert_emails"`
+	EmailSubjectOpened       string                  `json:"email_subject_opened"`
+	EmailBodyOpened          string                  `json:"email_body_opened"`
+	EmailSubjectResolved     string                  `json:"email_subject_resolved"`
+	EmailBodyResolved        string                  `json:"email_body_resolved"`
+	EmailSubjectRepeated     string                  `json:"email_subject_repeated"`
+	EmailBodyRepeated        string                  `json:"email_body_repeated"`
+	EmailSubjectAutofixLimit string                  `json:"email_subject_autofix_limit"`
+	EmailBodyAutofixLimit    string                  `json:"email_body_autofix_limit"`
+	Checks                   []db.ReplaceCheckParams `json:"checks"`
 }
 
 func (h *Handler) getProjectSettings(w http.ResponseWriter, r *http.Request) {
@@ -300,14 +308,22 @@ func (h *Handler) updateProjectSettings(w http.ResponseWriter, r *http.Request) 
 	}
 
 	updatedProject, err := h.store.UpdateProject(r.Context(), projectID, db.UpdateProjectParams{
-		Name:              req.Name,
-		Domain:            req.Domain,
-		CheckIntervalSec:  req.CheckIntervalSec,
-		FailureThreshold:  req.FailureThreshold,
-		AutofixEnabled:    req.AutofixEnabled,
-		MaxAutofixRetries: req.MaxAutofixRetries,
-		SMTPProfileID:     req.SMTPProfileID,
-		AlertEmails:       normalizeEmails(req.AlertEmails),
+		Name:                     req.Name,
+		Domain:                   req.Domain,
+		CheckIntervalSec:         req.CheckIntervalSec,
+		FailureThreshold:         req.FailureThreshold,
+		AutofixEnabled:           req.AutofixEnabled,
+		MaxAutofixRetries:        req.MaxAutofixRetries,
+		SMTPProfileID:            req.SMTPProfileID,
+		AlertEmails:              normalizeEmails(req.AlertEmails),
+		EmailSubjectOpened:       req.EmailSubjectOpened,
+		EmailBodyOpened:          req.EmailBodyOpened,
+		EmailSubjectResolved:     req.EmailSubjectResolved,
+		EmailBodyResolved:        req.EmailBodyResolved,
+		EmailSubjectRepeated:     req.EmailSubjectRepeated,
+		EmailBodyRepeated:        req.EmailBodyRepeated,
+		EmailSubjectAutofixLimit: req.EmailSubjectAutofixLimit,
+		EmailBodyAutofixLimit:    req.EmailBodyAutofixLimit,
 	})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)

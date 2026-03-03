@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/smtp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +22,17 @@ type EmailConfig struct {
 	Pass string
 	From string
 }
+
+const (
+	defaultEmailSubjectOpened       = "[DOWN] {domain} is unreachable"
+	defaultEmailBodyOpened          = "Project: {project_name}\nDomain: {domain}\nEvent: opened\nIncident ID: {incident_id}\nCheck: #{check_id} {check_type} {check_target}\nError: {error}\nTimestamp: {timestamp}\nAutofix: {autofix_status}"
+	defaultEmailSubjectResolved     = "[RESOLVED] {domain} recovered"
+	defaultEmailBodyResolved        = "Project: {project_name}\nDomain: {domain}\nEvent: resolved\nIncident ID: {incident_id}\nCheck: #{check_id} {check_type} {check_target}\nTimestamp: {timestamp}\nAutofix: {autofix_status}"
+	defaultEmailSubjectRepeated     = "[DOWN][REPEATED] {domain} still failing"
+	defaultEmailBodyRepeated        = "Project: {project_name}\nDomain: {domain}\nEvent: repeated\nIncident ID: {incident_id}\nCheck: #{check_id} {check_type} {check_target}\nError: {error}\nTimestamp: {timestamp}\nAutofix: {autofix_status}"
+	defaultEmailSubjectAutofixLimit = "[AUTOFIX LIMIT] {domain} retries exhausted"
+	defaultEmailBodyAutofixLimit    = "Project: {project_name}\nDomain: {domain}\nIncident ID: {incident_id}\nAutofix attempts: {autofix_attempts}\nMax retries: {max_retries}\nTimestamp: {timestamp}\n\nAutomatic fixes have been exhausted. Manual intervention required."
+)
 
 type Service struct {
 	store         *db.Store
@@ -73,7 +85,7 @@ func (s *Service) handleHealthy(ctx context.Context, check db.CheckContext, resu
 		return err
 	}
 	_ = s.store.InsertLog(ctx, check.ProjectID, "info", fmt.Sprintf("incident %d resolved", openIncident.ID))
-	return s.enqueueAlert(ctx, check, openIncident.ID, "resolved", "none")
+	return s.enqueueAlert(ctx, check, openIncident.ID, "resolved", "none", "")
 }
 
 func (s *Service) handleFailure(ctx context.Context, check db.CheckContext, result monitor.Result) error {
@@ -141,7 +153,7 @@ func (s *Service) handleFailure(ctx context.Context, check db.CheckContext, resu
 	if !s.shouldSendAlert(existing, newlyOpened) {
 		return nil
 	}
-	if err := s.enqueueAlert(ctx, check, incidentID, eventType, autofixStatus); err != nil {
+	if err := s.enqueueAlert(ctx, check, incidentID, eventType, autofixStatus, result.ErrorMessage); err != nil {
 		return err
 	}
 	return s.store.UpdateIncidentAlertTime(ctx, incidentID)
@@ -184,7 +196,7 @@ func (s *Service) runAutofix(ctx context.Context, check db.CheckContext, errMess
 	return "success"
 }
 
-func (s *Service) enqueueAlert(ctx context.Context, check db.CheckContext, incidentID int64, eventType, autofixStatus string) error {
+func (s *Service) enqueueAlert(ctx context.Context, check db.CheckContext, incidentID int64, eventType, autofixStatus, errorMessage string) error {
 	if len(check.AlertEmails) == 0 {
 		_ = s.store.InsertLog(ctx, check.ProjectID, "warn", "alert skipped (no recipients configured)")
 		return nil
@@ -195,15 +207,25 @@ func (s *Service) enqueueAlert(ctx context.Context, check db.CheckContext, incid
 		smtpProfileID = *check.ProjectSMTPID
 	}
 
-	subject := buildSubject(eventType, check.ProjectDomain)
-	body := strings.Join([]string{
-		fmt.Sprintf("Project: %s", check.ProjectName),
-		fmt.Sprintf("Domain: %s", check.ProjectDomain),
-		fmt.Sprintf("Event: %s", eventType),
-		fmt.Sprintf("Incident ID: %d", incidentID),
-		fmt.Sprintf("Timestamp: %s", time.Now().UTC().Format(time.RFC3339)),
-		fmt.Sprintf("Autofix: %s", autofixStatus),
-	}, "\n")
+	now := time.Now().UTC()
+	subjectTpl, bodyTpl := s.templatesForEvent(check, eventType)
+	values := map[string]string{
+		"project_name":     check.ProjectName,
+		"domain":           check.ProjectDomain,
+		"event":            eventType,
+		"incident_id":      strconv.FormatInt(incidentID, 10),
+		"timestamp":        now.Format(time.RFC3339),
+		"autofix_status":   autofixStatus,
+		"error":            errorMessage,
+		"check_id":         strconv.FormatInt(check.ID, 10),
+		"check_target":     check.Target,
+		"check_type":       check.Type,
+		"max_retries":      strconv.Itoa(check.MaxAutofixRetries),
+		"autofix_attempts": "",
+	}
+
+	subject := applyEmailTemplate(subjectTpl, values)
+	body := applyEmailTemplate(bodyTpl, values)
 
 	return s.queue.EnqueueEmail(ctx, queue.EmailJob{
 		SMTPProfileID: smtpProfileID,
@@ -213,15 +235,34 @@ func (s *Service) enqueueAlert(ctx context.Context, check db.CheckContext, incid
 	})
 }
 
-func buildSubject(eventType, domain string) string {
+func (s *Service) templatesForEvent(check db.CheckContext, eventType string) (string, string) {
 	switch eventType {
 	case "opened":
-		return fmt.Sprintf("[DOWN] %s is unreachable", domain)
+		return fallback(check.EmailSubjectOpened, defaultEmailSubjectOpened),
+			fallback(check.EmailBodyOpened, defaultEmailBodyOpened)
 	case "resolved":
-		return fmt.Sprintf("[RESOLVED] %s recovered", domain)
+		return fallback(check.EmailSubjectResolved, defaultEmailSubjectResolved),
+			fallback(check.EmailBodyResolved, defaultEmailBodyResolved)
 	default:
-		return fmt.Sprintf("[DOWN][REPEATED] %s still failing", domain)
+		return fallback(check.EmailSubjectRepeated, defaultEmailSubjectRepeated),
+			fallback(check.EmailBodyRepeated, defaultEmailBodyRepeated)
 	}
+}
+
+func fallback(v, defaultV string) string {
+	if strings.TrimSpace(v) == "" {
+		return defaultV
+	}
+	return v
+}
+
+func applyEmailTemplate(template string, values map[string]string) string {
+	args := make([]string, 0, len(values)*4)
+	for key, value := range values {
+		args = append(args, "{"+key+"}", value)
+		args = append(args, "{{"+key+"}}", value)
+	}
+	return strings.NewReplacer(args...).Replace(template)
 }
 
 // sendAutofixExceededEmail sends an escalation email using env-based SMTP
@@ -234,17 +275,24 @@ func (s *Service) sendAutofixExceededEmail(ctx context.Context, check db.CheckCo
 		return
 	}
 
-	subject := fmt.Sprintf("[AUTOFIX LIMIT] %s – autofix retries exhausted", check.ProjectDomain)
-	body := strings.Join([]string{
-		fmt.Sprintf("Project: %s", check.ProjectName),
-		fmt.Sprintf("Domain: %s", check.ProjectDomain),
-		fmt.Sprintf("Incident ID: %d", incidentID),
-		fmt.Sprintf("Autofix attempts: %d", attempts),
-		fmt.Sprintf("Max retries: %d", check.MaxAutofixRetries),
-		fmt.Sprintf("Timestamp: %s", time.Now().UTC().Format(time.RFC3339)),
-		"",
-		"Automatic fixes have been exhausted. Manual intervention required.",
-	}, "\n")
+	subject := defaultEmailSubjectAutofixLimit
+	now := time.Now().UTC()
+	values := map[string]string{
+		"project_name":     check.ProjectName,
+		"domain":           check.ProjectDomain,
+		"event":            "autofix_limit",
+		"incident_id":      strconv.FormatInt(incidentID, 10),
+		"timestamp":        now.Format(time.RFC3339),
+		"autofix_attempts": strconv.Itoa(attempts),
+		"max_retries":      strconv.Itoa(check.MaxAutofixRetries),
+		"check_id":         strconv.FormatInt(check.ID, 10),
+		"check_type":       check.Type,
+		"check_target":     check.Target,
+		"autofix_status":   "limit_exceeded",
+		"error":            "",
+	}
+	subject = applyEmailTemplate(fallback(check.EmailSubjectAutofixLimit, subject), values)
+	body := applyEmailTemplate(fallback(check.EmailBodyAutofixLimit, defaultEmailBodyAutofixLimit), values)
 
 	// Prefer env-based SMTP if configured
 	if s.emailCfg.User != "" && s.emailCfg.Pass != "" {
