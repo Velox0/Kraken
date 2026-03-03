@@ -810,7 +810,13 @@ func (h *Handler) createSMTPProfile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, profile)
+	writeJSON(w, http.StatusCreated, db.SMTPProfileSummary{
+		ID:        profile.ID,
+		Host:      profile.Host,
+		Port:      profile.Port,
+		Username:  profile.Username,
+		FromEmail: profile.FromEmail,
+	})
 }
 
 func (h *Handler) listSMTPProfiles(w http.ResponseWriter, r *http.Request) {

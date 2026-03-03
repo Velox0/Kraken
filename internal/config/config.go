@@ -22,6 +22,7 @@ type Config struct {
 	EmailPort          int
 	EmailUser          string
 	EmailPass          string
+	EmailFrom          string
 }
 
 func Load() Config {
@@ -41,6 +42,7 @@ func Load() Config {
 		EmailPort:          envInt("EMAIL_PORT", 587),
 		EmailUser:          os.Getenv("EMAIL_USER"),
 		EmailPass:          os.Getenv("EMAIL_PASS"),
+		EmailFrom:          envOrDefault("EMAIL_FROM", os.Getenv("EMAIL_USER")),
 	}
 }
 

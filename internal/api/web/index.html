@@ -401,6 +401,46 @@
                   >SMTP Profile
                   <select id="settingsSMTP"></select>
                 </label>
+                <label class="full">
+                  <span class="muted"
+                    >If no profile is selected, alerts use env default SMTP.</span
+                  >
+                </label>
+                <div class="full">
+                  <h3>Saved SMTP Profiles</h3>
+                  <div id="smtpProfilesList" class="list"></div>
+                </div>
+                <div class="full settings-checks-head">
+                  <h3>Create SMTP Profile</h3>
+                </div>
+                <label
+                  >SMTP Host<input
+                    id="smtpHost"
+                    placeholder="smtp.gmail.com"
+                /></label>
+                <label
+                  >SMTP Port<input
+                    id="smtpPort"
+                    type="number"
+                    min="1"
+                    value="587"
+                /></label>
+                <label
+                  >SMTP User<input
+                    id="smtpUser"
+                    placeholder="alerts@domain.com"
+                /></label>
+                <label
+                  >SMTP Password<input id="smtpPass" type="password"
+                /></label>
+                <label class="full"
+                  >From Email<input
+                    id="smtpFrom"
+                    placeholder="alerts@domain.com"
+                /></label>
+                <button id="createSMTPBtn" class="btn secondary full" type="button">
+                  Create SMTP Profile
+                </button>
                 <label class="checkbox-row">
                   <input id="settingsAutofix" type="checkbox" /> Enable Autofix
                 </label>

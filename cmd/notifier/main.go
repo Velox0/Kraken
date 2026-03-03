@@ -34,7 +34,14 @@ func main() {
 		Store:      store,
 		Queue:      q,
 		SMTPClient: notifier.NewSMTPClient(),
-		Log:        log.Default(),
+		DefaultSMTP: notifier.SMTPProfile{
+			Host:              cfg.EmailHost,
+			Port:              cfg.EmailPort,
+			Username:          cfg.EmailUser,
+			PasswordEncrypted: cfg.EmailPass,
+			FromEmail:         cfg.EmailFrom,
+		},
+		Log: log.Default(),
 	}
 	if err := runner.Validate(); err != nil {
 		log.Fatalf("notifier config invalid: %v", err)

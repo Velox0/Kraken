@@ -143,10 +143,11 @@ make app
 | `ALERT_COOLDOWN_SEC`   | `300`                                                                | Minimum seconds between repeated alerts for the same incident |
 | `APP_ENV`              | `dev`                                                                | Environment name                                              |
 | `UI_DIR`               |                                                                      | Serve UI from disk instead of embedded FS (for dev)           |
-| `EMAIL_HOST`           | `smtp.gmail.com`                                                     | SMTP host for autofix-exceeded escalation emails              |
+| `EMAIL_HOST`           | `smtp.gmail.com`                                                     | Default SMTP host (used when project SMTP profile is not set) |
 | `EMAIL_PORT`           | `587`                                                                | SMTP port                                                     |
 | `EMAIL_USER`           |                                                                      | SMTP username                                                 |
 | `EMAIL_PASS`           |                                                                      | SMTP password                                                 |
+| `EMAIL_FROM`           | `EMAIL_USER`                                                         | Default sender email                                          |
 
 ---
 
@@ -202,6 +203,10 @@ make app
 | GET    | `/v1/smtp_profiles` | List SMTP profiles  |
 | POST   | `/v1/smtp_profiles` | Create SMTP profile |
 
+Alert routing order:
+- Project SMTP profile (if selected in project settings)
+- Env default SMTP (`EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USER`, `EMAIL_PASS`, `EMAIL_FROM`)
+
 ---
 
 ## Autofix
@@ -211,7 +216,7 @@ make app
 - Per-fix execution timeout
 - Full output logged to the project logs table
 - **Retry limit:** configurable per project via `max_autofix_retries` in settings (0 = unlimited)
-- When retries are exhausted, an **escalation email** is sent via env-based SMTP (or falls back to the project's SMTP profile)
+- When retries are exhausted, an escalation email is sent to alert recipients using the same routing order above.
 
 ## Notes
 

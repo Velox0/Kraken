@@ -12,10 +12,11 @@ import (
 )
 
 type Notifier struct {
-	Store      *db.Store
-	Queue      *queue.RedisQueue
-	SMTPClient *notifier.SMTPClient
-	Log        *log.Logger
+	Store       *db.Store
+	Queue       *queue.RedisQueue
+	SMTPClient  *notifier.SMTPClient
+	DefaultSMTP notifier.SMTPProfile
+	Log         *log.Logger
 }
 
 func (n *Notifier) Run(ctx context.Context) {
@@ -41,29 +42,56 @@ func (n *Notifier) Run(ctx context.Context) {
 			continue
 		}
 
-		profile, err := n.Store.GetSMTPProfile(ctx, job.SMTPProfileID)
+		smtpProfile, err := n.resolveSMTPProfile(ctx, job.SMTPProfileID)
 		if err != nil {
-			n.Log.Printf("load smtp profile failed: %v", err)
-			continue
-		}
-		if profile == nil {
-			n.Log.Printf("smtp profile not found: %d", job.SMTPProfileID)
+			n.Log.Printf("resolve smtp profile failed: %v", err)
 			continue
 		}
 
-		err = n.SMTPClient.Send(notifier.SMTPProfile{
-			Host:              profile.Host,
-			Port:              profile.Port,
-			Username:          profile.Username,
-			PasswordEncrypted: profile.PasswordEncrypted,
-			FromEmail:         profile.FromEmail,
-		}, job.To, job.Subject, job.Body)
+		err = n.SMTPClient.Send(smtpProfile, job.To, job.Subject, job.Body)
 		if err != nil {
 			n.Log.Printf("send email failed: %v", err)
 			continue
 		}
 		n.Log.Printf("alert sent to %d recipient(s)", len(job.To))
 	}
+}
+
+func (n *Notifier) resolveSMTPProfile(ctx context.Context, profileID int64) (notifier.SMTPProfile, error) {
+	if profileID <= 0 {
+		if n.hasDefaultSMTP() {
+			return n.DefaultSMTP, nil
+		}
+		return notifier.SMTPProfile{}, fmt.Errorf("no default env smtp configured")
+	}
+
+	profile, err := n.Store.GetSMTPProfile(ctx, profileID)
+	if err != nil {
+		return notifier.SMTPProfile{}, err
+	}
+	if profile == nil {
+		if n.hasDefaultSMTP() {
+			n.Log.Printf("smtp profile %d missing, falling back to env default smtp", profileID)
+			return n.DefaultSMTP, nil
+		}
+		return notifier.SMTPProfile{}, fmt.Errorf("smtp profile not found: %d", profileID)
+	}
+
+	return notifier.SMTPProfile{
+		Host:              profile.Host,
+		Port:              profile.Port,
+		Username:          profile.Username,
+		PasswordEncrypted: profile.PasswordEncrypted,
+		FromEmail:         profile.FromEmail,
+	}, nil
+}
+
+func (n *Notifier) hasDefaultSMTP() bool {
+	return n.DefaultSMTP.Host != "" &&
+		n.DefaultSMTP.Port > 0 &&
+		n.DefaultSMTP.Username != "" &&
+		n.DefaultSMTP.PasswordEncrypted != "" &&
+		n.DefaultSMTP.FromEmail != ""
 }
 
 func (n *Notifier) Validate() error {

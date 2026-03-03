@@ -19,6 +19,7 @@ type EmailConfig struct {
 	Port int
 	User string
 	Pass string
+	From string
 }
 
 type Service struct {
@@ -184,9 +185,14 @@ func (s *Service) runAutofix(ctx context.Context, check db.CheckContext, errMess
 }
 
 func (s *Service) enqueueAlert(ctx context.Context, check db.CheckContext, incidentID int64, eventType, autofixStatus string) error {
-	if check.ProjectSMTPID == nil || len(check.AlertEmails) == 0 {
-		_ = s.store.InsertLog(ctx, check.ProjectID, "warn", "alert skipped (smtp profile or recipients not configured)")
+	if len(check.AlertEmails) == 0 {
+		_ = s.store.InsertLog(ctx, check.ProjectID, "warn", "alert skipped (no recipients configured)")
 		return nil
+	}
+
+	smtpProfileID := int64(0) // Use env/default smtp when project smtp profile is not selected.
+	if check.ProjectSMTPID != nil && *check.ProjectSMTPID > 0 {
+		smtpProfileID = *check.ProjectSMTPID
 	}
 
 	subject := buildSubject(eventType, check.ProjectDomain)
@@ -200,7 +206,7 @@ func (s *Service) enqueueAlert(ctx context.Context, check db.CheckContext, incid
 	}, "\n")
 
 	return s.queue.EnqueueEmail(ctx, queue.EmailJob{
-		SMTPProfileID: *check.ProjectSMTPID,
+		SMTPProfileID: smtpProfileID,
 		To:            check.AlertEmails,
 		Subject:       subject,
 		Body:          body,
@@ -244,9 +250,13 @@ func (s *Service) sendAutofixExceededEmail(ctx context.Context, check db.CheckCo
 	if s.emailCfg.User != "" && s.emailCfg.Pass != "" {
 		addr := fmt.Sprintf("%s:%d", s.emailCfg.Host, s.emailCfg.Port)
 		auth := smtp.PlainAuth("", s.emailCfg.User, s.emailCfg.Pass, s.emailCfg.Host)
+		from := s.emailCfg.From
+		if strings.TrimSpace(from) == "" {
+			from = s.emailCfg.User
+		}
 
 		msg := strings.Builder{}
-		msg.WriteString("From: " + s.emailCfg.User + "\r\n")
+		msg.WriteString("From: " + from + "\r\n")
 		msg.WriteString("To: " + strings.Join(recipients, ",") + "\r\n")
 		msg.WriteString("Subject: " + subject + "\r\n")
 		msg.WriteString("MIME-Version: 1.0\r\n")
@@ -254,7 +264,7 @@ func (s *Service) sendAutofixExceededEmail(ctx context.Context, check db.CheckCo
 		msg.WriteString("\r\n")
 		msg.WriteString(body)
 
-		if err := smtp.SendMail(addr, auth, s.emailCfg.User, recipients, []byte(msg.String())); err != nil {
+		if err := smtp.SendMail(addr, auth, from, recipients, []byte(msg.String())); err != nil {
 			_ = s.store.InsertLog(ctx, check.ProjectID, "error", "autofix-exceeded email (env smtp) failed: "+err.Error())
 		} else {
 			_ = s.store.InsertLog(ctx, check.ProjectID, "warn", "autofix-exceeded escalation email sent via env smtp")

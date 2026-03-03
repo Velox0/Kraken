@@ -104,6 +104,13 @@ const el = {
   settingsInterval: document.getElementById("settingsInterval"),
   settingsThreshold: document.getElementById("settingsThreshold"),
   settingsSMTP: document.getElementById("settingsSMTP"),
+  smtpProfilesList: document.getElementById("smtpProfilesList"),
+  smtpHost: document.getElementById("smtpHost"),
+  smtpPort: document.getElementById("smtpPort"),
+  smtpUser: document.getElementById("smtpUser"),
+  smtpPass: document.getElementById("smtpPass"),
+  smtpFrom: document.getElementById("smtpFrom"),
+  createSMTPBtn: document.getElementById("createSMTPBtn"),
   settingsAutofix: document.getElementById("settingsAutofix"),
   settingsMaxRetries: document.getElementById("settingsMaxRetries"),
   settingsEmails: document.getElementById("settingsEmails"),
@@ -946,6 +953,9 @@ function renderSettingsForm() {
     if (el.settingsChecksRows) el.settingsChecksRows.innerHTML = "";
     if (el.settingsSMTP)
       el.settingsSMTP.innerHTML = `<option value="">No SMTP profiles</option>`;
+    if (el.smtpProfilesList) {
+      el.smtpProfilesList.innerHTML = `<div class="list-item"><div class="main">No SMTP profiles</div></div>`;
+    }
     return;
   }
 
@@ -967,15 +977,70 @@ function renderSettingsForm() {
 
   const smtpProfiles = state.data.smtpProfiles || [];
   const selectedSMTP = state.selectedProject.smtp_profile_id;
-  const smtpOptions = [`<option value="">None</option>`];
+  const smtpOptions = [`<option value="">Use ENV default</option>`];
   smtpProfiles.forEach((profile) => {
     smtpOptions.push(
       `<option value="${profile.id}" ${selectedSMTP === profile.id ? "selected" : ""}>#${profile.id} ${escapeHtml(profile.host)}:${profile.port} (${escapeHtml(profile.from_email)})</option>`,
     );
   });
   el.settingsSMTP.innerHTML = smtpOptions.join("");
+  if (el.smtpProfilesList) {
+    el.smtpProfilesList.innerHTML = smtpProfiles.length
+      ? smtpProfiles
+          .map(
+            (profile) => `
+          <div class="list-item">
+            <div class="main">
+              <strong>#${profile.id} ${escapeHtml(profile.from_email)}</strong>
+              <span class="meta">${escapeHtml(profile.host)}:${profile.port} | ${escapeHtml(profile.username)}</span>
+            </div>
+          </div>`,
+          )
+          .join("")
+      : `<div class="list-item"><div class="main">No SMTP profiles saved</div></div>`;
+  }
 
   renderSettingsChecksRows(state.data.checks || []);
+}
+
+async function createSMTPProfileFromSettings() {
+  const host = (el.smtpHost?.value || "").trim();
+  const port = Number((el.smtpPort?.value || "").trim());
+  const username = (el.smtpUser?.value || "").trim();
+  const password = (el.smtpPass?.value || "").trim();
+  const fromEmail = (el.smtpFrom?.value || "").trim();
+
+  if (!host || !port || !username || !password || !fromEmail) {
+    showToast("SMTP host, port, user, pass and from email are required", "error");
+    return;
+  }
+
+  try {
+    const created = await api("/v1/smtp_profiles", {
+      method: "POST",
+      body: JSON.stringify({
+        host,
+        port,
+        username,
+        password,
+        from_email: fromEmail,
+      }),
+    });
+
+    if (el.smtpPass) el.smtpPass.value = "";
+    if (el.smtpHost) el.smtpHost.value = "";
+    if (el.smtpPort) el.smtpPort.value = "587";
+    if (el.smtpUser) el.smtpUser.value = "";
+    if (el.smtpFrom) el.smtpFrom.value = "";
+
+    await loadProjectSettings();
+    if (el.settingsSMTP && created?.id) {
+      el.settingsSMTP.value = String(created.id);
+    }
+    showToast("SMTP profile created");
+  } catch (err) {
+    showToast(err.message, "error");
+  }
 }
 
 function collectSettingsChecks() {
@@ -1603,6 +1668,8 @@ function attachEvents() {
     });
   if (el.settingsSaveBtn)
     el.settingsSaveBtn.addEventListener("click", () => saveSettings());
+  if (el.createSMTPBtn)
+    el.createSMTPBtn.addEventListener("click", createSMTPProfileFromSettings);
   if (el.settingsModal) {
     el.settingsModal.addEventListener("click", (event) => {
       if (event.target === el.settingsModal) closeSettingsModal();

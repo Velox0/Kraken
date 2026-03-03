@@ -43,6 +43,7 @@ func main() {
 		Port: cfg.EmailPort,
 		User: cfg.EmailUser,
 		Pass: cfg.EmailPass,
+		From: cfg.EmailFrom,
 	})
 
 	scheduler := &services.Scheduler{
@@ -62,7 +63,14 @@ func main() {
 		Store:      store,
 		Queue:      q,
 		SMTPClient: notifier.NewSMTPClient(),
-		Log:        log.Default(),
+		DefaultSMTP: notifier.SMTPProfile{
+			Host:              cfg.EmailHost,
+			Port:              cfg.EmailPort,
+			Username:          cfg.EmailUser,
+			PasswordEncrypted: cfg.EmailPass,
+			FromEmail:         cfg.EmailFrom,
+		},
+		Log: log.Default(),
 	}
 
 	for _, validate := range []func() error{scheduler.Validate, worker.Validate, notify.Validate} {

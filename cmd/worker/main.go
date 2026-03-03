@@ -38,6 +38,7 @@ func main() {
 		Port: cfg.EmailPort,
 		User: cfg.EmailUser,
 		Pass: cfg.EmailPass,
+		From: cfg.EmailFrom,
 	})
 
 	runner := &services.Worker{
